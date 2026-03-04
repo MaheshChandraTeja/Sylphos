@@ -1,0 +1,22 @@
+[package]
+name = "html_mvp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Minimal HTML tokenizer + DOM + serializer for round-trip tests."
+rust-version = "1.74"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.7.0"
+insta = { version = "1", features = ["yaml"] }
+pretty_assertions = "1"

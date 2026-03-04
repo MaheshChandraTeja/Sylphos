@@ -1,0 +1,25 @@
+[package]
+name = "myapp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Window + GPU + Fetch→Parse→Present wire-up demo"
+rust-version = "1.74"
+
+[[bin]]
+name = "myapp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+pollster = { workspace = true }
+tokio = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+util = { path = "../util" }
+fetch = { path = "../fetch" }
+html_mvp = { path = "../html_mvp" }

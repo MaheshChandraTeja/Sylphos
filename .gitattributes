@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.ps1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.sh   text eol=lf
+
+*.rs diff=rust
+*.toml diff=toml
+*.md diff=markdown
+
+*.md linguist-documentation

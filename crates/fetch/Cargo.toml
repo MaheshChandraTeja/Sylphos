@@ -1,0 +1,30 @@
+[package]
+name = "fetch"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Hyper+rustls HTTP client with redirects, gzip/deflate, streaming, timeouts, and TLS hardening."
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+rustls = { workspace = true }
+url = { workspace = true }
+async-compression = { workspace = true }
+futures-core = { workspace = true }
+futures-util = { workspace = true }
+async-stream = { workspace = true }

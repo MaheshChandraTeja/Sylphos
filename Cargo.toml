@@ -1,0 +1,80 @@
+[workspace]
+members = ["crates/util", "crates/app", "crates/html_mvp", "crates/fetch", ]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused = "deny"
+future_incompatible = "deny"
+
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[workspace.dependencies]
+anyhow = "1"
+bytes = "1"
+thiserror = "1"
+once_cell = "1"
+url = "2.5"
+
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time", "json"] }
+tracing-error = "0.2"
+
+pollster = "0.3"
+wgpu  = "0.20.1"
+winit = "0.30"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+
+hyper = { version = "1.3", features = ["http1", "http2", "client"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", features = ["http1", "http2", "webpki-roots"] }
+
+webpki-roots = "1"
+rustls = "0.23"
+
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+
+futures-core = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+
+async-compression = { version = "0.4", features = ["tokio", "gzip", "deflate", "zlib"] }
+async-stream = "0.3"
+
+clap = { version = "4.5", features = ["derive", "env"] }
+
+
+[profile.dev]
+debug = 2
+incremental = true
+lto = false
+codegen-units = 256
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
