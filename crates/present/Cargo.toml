@@ -1,0 +1,14 @@
+[package]
+name = "present"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "DOM-to-presentation extraction, CSS-lite styling, and deterministic paint planning for Sylphos"
+rust-version = "1.74"
+
+[lints]
+workspace = true
+
+[dependencies]
+html_mvp = { path = "../html_mvp" }
+thiserror = { workspace = true }

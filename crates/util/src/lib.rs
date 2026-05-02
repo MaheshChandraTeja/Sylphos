@@ -12,8 +12,20 @@ pub fn init_tracing() {
         let is_ci = env_flag("CI");
         let force_json = is_ci || env_eq("LOG_FORMAT", "json") || env_eq("RUST_LOG_FORMAT", "json");
 
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info,hyper=warn,reqwest=warn,tokio_util=warn"));
+        let rust_log = env::var("RUST_LOG").unwrap_or_default();
+        let mut filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new(
+                "info,hyper=warn,reqwest=warn,tokio_util=warn,wgpu_hal=error,wgpu_core=error",
+            )
+        });
+
+        if !has_target_directive(&rust_log, "wgpu_hal") {
+            filter = add_filter_directive(filter, "wgpu_hal=error");
+        }
+
+        if !has_target_directive(&rust_log, "wgpu_core") {
+            filter = add_filter_directive(filter, "wgpu_core=error");
+        }
 
         let time = tracing_subscriber::fmt::time::UtcTime::rfc_3339();
 
@@ -61,6 +73,22 @@ fn env_eq(name: &str, val: &str) -> bool {
     env::var(name)
         .map(|v| v.eq_ignore_ascii_case(val))
         .unwrap_or(false)
+}
+
+fn has_target_directive(value: &str, target: &str) -> bool {
+    value.split(',').any(|directive| {
+        directive
+            .trim()
+            .split_once('=')
+            .is_some_and(|(filter_target, _)| filter_target == target)
+    })
+}
+
+fn add_filter_directive(filter: EnvFilter, directive: &str) -> EnvFilter {
+    match directive.parse() {
+        Ok(directive) => filter.add_directive(directive),
+        Err(_) => filter,
+    }
 }
 
 #[cfg(test)]

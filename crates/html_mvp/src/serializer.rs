@@ -4,54 +4,62 @@ use crate::dom::{Document, Element, Node};
 
 pub fn serialize_document(doc: &Document) -> String {
     let mut out = String::new();
-    if let Some(dt) = &doc.doctype {
+
+    if let Some(doctype) = &doc.doctype {
         out.push_str("<!DOCTYPE ");
-        out.push_str(dt);
+        out.push_str(doctype);
         out.push('>');
     }
-    for n in &doc.children {
-        serialize_node(n, &mut out);
+
+    for node in &doc.children {
+        serialize_node(node, &mut out);
     }
+
     out
 }
 
-fn serialize_node(n: &Node, out: &mut String) {
-    match n {
-        Node::Text(t) => out.push_str(&escape_text(t)),
-        Node::Comment(c) => {
+fn serialize_node(node: &Node, out: &mut String) {
+    match node {
+        Node::Text(text) => out.push_str(&escape_text(text)),
+        Node::Comment(comment) => {
             out.push_str("<!--");
-            out.push_str(c);
+            out.push_str(comment);
             out.push_str("-->");
         }
-        Node::Element(el) => serialize_element(el, out),
+        Node::Element(element) => serialize_element(element, out),
     }
 }
 
-fn serialize_element(el: &Element, out: &mut String) {
+fn serialize_element(element: &Element, out: &mut String) {
     out.push('<');
-    out.push_str(&el.tag);
-    if !el.attrs.is_empty() {
-        let mut attrs = el.attrs.clone();
-        attrs.sort_by(|a, b| a.0.cmp(&b.0));
-        for (k, v) in attrs {
+    out.push_str(&element.tag);
+
+    if !element.attrs.is_empty() {
+        let mut attrs = element.attrs.clone();
+        attrs.sort_by(|left, right| left.0.cmp(&right.0));
+
+        for (key, value) in attrs {
             out.push(' ');
-            out.push_str(&k);
+            out.push_str(&key);
             out.push('=');
             out.push('"');
-            out.push_str(&escape_attr(&v));
+            out.push_str(&escape_attr(&value));
             out.push('"');
         }
     }
-    if is_void_element(&el.tag) {
-        out.push('>');
+
+    out.push('>');
+
+    if is_void_element(&element.tag) {
         return;
     }
-    out.push('>');
-    for child in &el.children {
+
+    for child in &element.children {
         serialize_node(child, out);
     }
+
     out.push_str("</");
-    out.push_str(&el.tag);
+    out.push_str(&element.tag);
     out.push('>');
 }
 
@@ -75,32 +83,36 @@ fn is_void_element(tag: &str) -> bool {
     )
 }
 
-fn escape_text(t: &str) -> String {
-    let mut s = String::with_capacity(t.len());
-    for ch in t.chars() {
+fn escape_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+
+    for ch in text.chars() {
         match ch {
-            '&' => s.push_str("&amp;"),
-            '<' => s.push_str("&lt;"),
-            '>' => s.push_str("&gt;"),
-            _ => s.push(ch),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
         }
     }
-    s
+
+    out
 }
 
-fn escape_attr(t: &str) -> String {
-    let mut s = String::with_capacity(t.len());
-    for ch in t.chars() {
+fn escape_attr(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+
+    for ch in text.chars() {
         match ch {
-            '&' => s.push_str("&amp;"),
-            '<' => s.push_str("&lt;"),
-            '>' => s.push_str("&gt;"),
-            '"' => s.push_str("&quot;"),
-            '\'' => s.push_str("&apos;"),
-            _ => s.push(ch),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push('\''),
+            _ => out.push(ch),
         }
     }
-    s
+
+    out
 }
 
 #[cfg(test)]
@@ -109,42 +121,46 @@ mod tests {
     use crate::parser::parse;
     use insta::assert_snapshot;
 
+    fn parse_document(html: &str) -> Document {
+        match parse(html) {
+            Ok(document) => document,
+            Err(error) => panic!("test HTML failed to parse: {error}"),
+        }
+    }
+
     #[test]
     fn comment_and_text() {
         let html = "<!-- hi --><div>ok<!--x--></div>";
-        let doc = parse(html).unwrap();
+        let doc = parse_document(html);
         let out = serialize_document(&doc);
-        assert_snapshot!("comment_and_text", @r###"<!-- hi --><div>ok<!--x--></div>"###);
-        assert_eq!(out, "<!-- hi --><div>ok<!--x--></div>");
+
+        assert_snapshot!(out, @r###"<!-- hi --><div>ok<!--x--></div>"###);
     }
 
     #[test]
     fn void_elements() {
         let html = "<div>a<br><img></div>";
-        let doc = parse(html).unwrap();
+        let doc = parse_document(html);
         let out = serialize_document(&doc);
-        assert_snapshot!("voids", @r###"<div>a<br><img></div>"###);
-        assert_eq!(out, "<div>a<br><img></div>");
+
+        assert_snapshot!(out, @r###"<div>a<br><img></div>"###);
     }
 
     #[test]
     fn attrs_and_entities() {
         let html = r#"<a href=/x?q=1&y='2' title='a "b" &amp; c' data-k=v>lt:&lt; > &amp;</a>"#;
-        let doc = parse(html).unwrap();
+        let doc = parse_document(html);
         let out = serialize_document(&doc);
-        assert_snapshot!("attrs_entities", @r###"<a data-k="v" href="/x?q=1&y='2'" title="a &quot;b&quot; &amp; c">lt:&lt; &gt; &amp;</a>"###);
-        assert_eq!(
-            out,
-            r#"<a data-k="v" href="/x?q=1&y='2'" title="a &quot;b&quot; &amp; c">lt:&lt; &gt; &amp;</a>"#
-        );
+
+        assert_snapshot!(out, @r###"<a data-k="v" href="/x?q=1&amp;y='2'" title="a &quot;b&quot; &amp; c">lt:&lt; &gt; &amp;</a>"###);
     }
 
     #[test]
     fn doctype_normalization() {
         let html = "<!DOCTYPE HTML><html><body>x</body></html>";
-        let doc = parse(html).unwrap();
+        let doc = parse_document(html);
         let out = serialize_document(&doc);
-        assert_snapshot!("doctype", @r###"<!DOCTYPE html><html><body>x</body></html>"###);
-        assert_eq!(out, "<!DOCTYPE html><html><body>x</body></html>");
+
+        assert_snapshot!(out, @r###"<!DOCTYPE html><html><body>x</body></html>"###);
     }
 }

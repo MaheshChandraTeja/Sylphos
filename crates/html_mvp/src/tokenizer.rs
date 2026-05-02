@@ -1,5 +1,3 @@
-use thiserror::Error;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     Doctype {
@@ -17,426 +15,410 @@ pub enum Token {
     Text(String),
 }
 
-#[derive(Debug, Error)]
-pub enum TokenizeError {
-    #[error("unexpected end of input")]
-    Eof,
-    #[error("malformed tag")]
-    MalformedTag,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum State {
-    Data,
-    TagOpen,
-    EndTagOpen,
-    TagName,
-    BeforeAttrName,
-    AttrName,
-    AfterAttrName,
-    BeforeAttrValue,
-    AttrValueUnquoted,
-    AttrValueSingleQuoted,
-    AttrValueDoubleQuoted,
-    SelfClosingStartTag,
-    CommentStart,
-    CommentStartDash,
-    Comment,
-    CommentEndDash,
-    CommentEnd,
-    DoctypeStart,
-    DoctypeName,
-}
-
 pub struct Tokenizer<'a> {
-    it: std::str::Chars<'a>,
-    _buf: String,
-    cur: Option<char>,
+    input: &'a str,
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn new(input: &'a str) -> Self {
-        let mut it = input.chars();
-        let cur = it.next();
-        Self {
-            it,
-            _buf: String::new(),
-            cur,
-        }
+    pub const fn new(input: &'a str) -> Self {
+        Self { input }
     }
 
-    fn bump(&mut self) -> Option<char> {
-        let c = self.cur;
-        self.cur = self.it.next();
-        c
-    }
+    pub fn tokenize(self) -> Vec<Token> {
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut tokens = Vec::new();
+        let mut text = String::new();
+        let mut index = 0usize;
 
-    fn peek(&self) -> Option<char> {
-        self.cur
-    }
+        while index < chars.len() {
+            if chars[index] != '<' {
+                text.push(chars[index]);
+                index += 1;
+                continue;
+            }
 
-    fn push(&mut self, s: &mut String, c: char) {
-        s.push(c);
-    }
+            if starts_with(&chars, index, "<!--") {
+                if let Some(end) = find_sequence(&chars, index + 4, "-->") {
+                    flush_text(&mut tokens, &mut text);
 
-    pub fn tokenize(mut self) -> Result<Vec<Token>, TokenizeError> {
-        use State::*;
-        let mut out = Vec::new();
-        let mut state = Data;
-
-        let mut tag_name = String::new();
-        let mut attrs: Vec<(String, String)> = Vec::new();
-        let mut attr_name = String::new();
-        let mut attr_val = String::new();
-        let mut self_closing = false;
-
-        let mut text_buf = String::new();
-        let mut comment_buf = String::new();
-        let mut doctype_name = String::new();
-
-        while let Some(c) = self.bump() {
-            match state {
-                Data => match c {
-                    '<' => {
-                        if !text_buf.is_empty() {
-                            out.push(Token::Text(decode_entities(&text_buf)));
-                            text_buf.clear();
-                        }
-                        state = TagOpen;
-                    }
-                    _ => self.push(&mut text_buf, c),
-                },
-                TagOpen => match c {
-                    '/' => {
-                        state = EndTagOpen;
-                    }
-                    '!' => {
-                        if self.peek() == Some('-') {
-                            self.bump();
-                            if self.peek() == Some('-') {
-                                self.bump();
-                                comment_buf.clear();
-                                state = CommentStart;
-                            } else {
-                                return Err(TokenizeError::MalformedTag);
-                            }
-                        } else {
-                            state = DoctypeStart;
-                        }
-                    }
-                    c if is_ascii_alpha(c) => {
-                        tag_name.clear();
-                        attrs.clear();
-                        attr_name.clear();
-                        attr_val.clear();
-                        self_closing = false;
-                        tag_name.push(c.to_ascii_lowercase());
-                        state = TagName;
-                    }
-                    _ => return Err(TokenizeError::MalformedTag),
-                },
-                EndTagOpen => {
-                    if is_ascii_alpha(c) {
-                        tag_name.clear();
-                        tag_name.push(c.to_ascii_lowercase());
-                        state = TagName;
-                    } else {
-                        return Err(TokenizeError::MalformedTag);
-                    }
+                    let comment = chars[index + 4..end].iter().collect::<String>();
+                    tokens.push(Token::Comment(comment));
+                    index = end + 3;
+                    continue;
                 }
-                TagName => match c {
-                    c if is_space(c) => state = BeforeAttrName,
-                    '/' => state = SelfClosingStartTag,
-                    '>' => {
-                        if self.buf_is_end_tag(&out) {
-                            out.push(Token::EndTag {
-                                name: tag_name.clone(),
-                            });
-                        } else {
-                            out.push(Token::StartTag {
-                                name: tag_name.clone(),
-                                attrs: attrs.drain(..).collect(),
-                                self_closing,
-                            });
-                        }
-                        state = Data;
+
+                text.push('<');
+                index += 1;
+                continue;
+            }
+
+            if starts_with(&chars, index, "<!") {
+                if let Some(end) = find_char(&chars, index + 2, '>') {
+                    flush_text(&mut tokens, &mut text);
+
+                    let raw = chars[index + 2..end].iter().collect::<String>();
+                    let name = normalize_doctype_name(&raw);
+
+                    if !name.is_empty() {
+                        tokens.push(Token::Doctype { name });
                     }
-                    c => tag_name.push(c.to_ascii_lowercase()),
-                },
-                BeforeAttrName => match c {
-                    c if is_space(c) => {}
-                    '/' => state = SelfClosingStartTag,
-                    '>' => {
-                        if self.buf_is_end_tag(&out) {
-                            out.push(Token::EndTag {
-                                name: tag_name.clone(),
-                            });
-                        } else {
-                            out.push(Token::StartTag {
-                                name: tag_name.clone(),
-                                attrs: attrs.drain(..).collect(),
-                                self_closing,
-                            });
-                        }
-                        state = Data;
-                    }
-                    c => {
-                        attr_name.clear();
-                        attr_val.clear();
-                        attr_name.push(c.to_ascii_lowercase());
-                        state = AttrName;
-                    }
-                },
-                AttrName => match c {
-                    c if is_space(c) => state = AfterAttrName,
-                    '=' => state = BeforeAttrValue,
-                    '/' => {
-                        attrs.push((attr_name.clone(), String::new()));
-                        state = SelfClosingStartTag;
-                    }
-                    '>' => {
-                        attrs.push((attr_name.clone(), String::new()));
-                        if self.buf_is_end_tag(&out) {
-                            out.push(Token::EndTag {
-                                name: tag_name.clone(),
-                            });
-                        } else {
-                            out.push(Token::StartTag {
-                                name: tag_name.clone(),
-                                attrs: attrs.drain(..).collect(),
-                                self_closing,
-                            });
-                        }
-                        state = Data;
-                    }
-                    c => attr_name.push(c.to_ascii_lowercase()),
-                },
-                AfterAttrName => match c {
-                    c if is_space(c) => {}
-                    '=' => state = BeforeAttrValue,
-                    '/' => {
-                        attrs.push((attr_name.clone(), String::new()));
-                        state = SelfClosingStartTag;
-                    }
-                    '>' => {
-                        attrs.push((attr_name.clone(), String::new()));
-                        if self.buf_is_end_tag(&out) {
-                            out.push(Token::EndTag {
-                                name: tag_name.clone(),
-                            });
-                        } else {
-                            out.push(Token::StartTag {
-                                name: tag_name.clone(),
-                                attrs: attrs.drain(..).collect(),
-                                self_closing,
-                            });
-                        }
-                        state = Data;
-                    }
-                    c => {
-                        attrs.push((attr_name.clone(), String::new()));
-                        attr_name.clear();
-                        attr_val.clear();
-                        attr_name.push(c.to_ascii_lowercase());
-                        state = AttrName;
-                    }
-                },
-                BeforeAttrValue => match c {
-                    c if is_space(c) => {}
-                    '"' => {
-                        attr_val.clear();
-                        state = AttrValueDoubleQuoted;
-                    }
-                    '\'' => {
-                        attr_val.clear();
-                        state = AttrValueSingleQuoted;
-                    }
-                    '>' => {
-                        attrs.push((attr_name.clone(), String::new()));
-                        if self.buf_is_end_tag(&out) {
-                            out.push(Token::EndTag {
-                                name: tag_name.clone(),
-                            });
-                        } else {
-                            out.push(Token::StartTag {
-                                name: tag_name.clone(),
-                                attrs: attrs.drain(..).collect(),
-                                self_closing,
-                            });
-                        }
-                        state = Data;
-                    }
-                    c => {
-                        attr_val.clear();
-                        attr_val.push(c);
-                        state = AttrValueUnquoted;
-                    }
-                },
-                AttrValueUnquoted => match c {
-                    c if is_space(c) => {
-                        attrs.push((attr_name.clone(), decode_entities(&attr_val)));
-                        state = BeforeAttrName;
-                    }
-                    '>' => {
-                        attrs.push((attr_name.clone(), decode_entities(&attr_val)));
-                        if self.buf_is_end_tag(&out) {
-                            out.push(Token::EndTag {
-                                name: tag_name.clone(),
-                            });
-                        } else {
-                            out.push(Token::StartTag {
-                                name: tag_name.clone(),
-                                attrs: attrs.drain(..).collect(),
-                                self_closing,
-                            });
-                        }
-                        state = Data;
-                    }
-                    c => attr_val.push(c),
-                },
-                AttrValueSingleQuoted => match c {
-                    '\'' => {
-                        attrs.push((attr_name.clone(), decode_entities(&attr_val)));
-                        state = BeforeAttrName;
-                    }
-                    c => attr_val.push(c),
-                },
-                AttrValueDoubleQuoted => match c {
-                    '"' => {
-                        attrs.push((attr_name.clone(), decode_entities(&attr_val)));
-                        state = BeforeAttrName;
-                    }
-                    c => attr_val.push(c),
-                },
-                SelfClosingStartTag => match c {
-                    '>' => {
-                        self_closing = true;
-                        out.push(Token::StartTag {
-                            name: tag_name.clone(),
-                            attrs: attrs.drain(..).collect(),
-                            self_closing,
-                        });
-                        self_closing = false;
-                        state = Data;
-                    }
-                    c if is_space(c) => {}
-                    _ => return Err(TokenizeError::MalformedTag),
-                },
-                CommentStart => match c {
-                    '-' => state = CommentStartDash,
-                    _ => {
-                        comment_buf.push(c);
-                        state = Comment;
-                    }
-                },
-                CommentStartDash => match c {
-                    '-' => state = CommentEnd,
-                    _ => {
-                        comment_buf.push('-');
-                        comment_buf.push(c);
-                        state = Comment;
-                    }
-                },
-                Comment => match c {
-                    '-' => state = CommentEndDash,
-                    c => comment_buf.push(c),
-                },
-                CommentEndDash => match c {
-                    '-' => state = CommentEnd,
-                    c => {
-                        comment_buf.push('-');
-                        comment_buf.push(c);
-                        state = Comment;
-                    }
-                },
-                CommentEnd => match c {
-                    '>' => {
-                        out.push(Token::Comment(comment_buf.clone()));
-                        comment_buf.clear();
-                        state = Data;
-                    }
-                    '-' => {}
-                    c => {
-                        comment_buf.push_str("--");
-                        comment_buf.push(c);
-                        state = Comment;
-                    }
-                },
-                DoctypeStart => match c {
-                    c if is_space(c) => {}
-                    _ => {
-                        doctype_name.clear();
-                        doctype_name.push(c);
-                        state = DoctypeName;
-                    }
-                },
-                DoctypeName => match c {
-                    '>' => {
-                        out.push(Token::Doctype {
-                            name: doctype_name.trim().to_string(),
-                        });
-                        state = Data;
-                    }
-                    c => doctype_name.push(c),
-                },
+
+                    index = end + 1;
+                    continue;
+                }
+
+                text.push('<');
+                index += 1;
+                continue;
+            }
+
+            if starts_with(&chars, index, "</") {
+                if let Some((name, next_index)) = parse_end_tag(&chars, index) {
+                    flush_text(&mut tokens, &mut text);
+                    tokens.push(Token::EndTag { name });
+                    index = next_index;
+                    continue;
+                }
+
+                text.push('<');
+                index += 1;
+                continue;
+            }
+
+            if index + 1 < chars.len() && is_tag_name_char(chars[index + 1]) {
+                if let Some((token, next_index)) = parse_start_tag(&chars, index) {
+                    flush_text(&mut tokens, &mut text);
+                    tokens.push(token);
+                    index = next_index;
+                    continue;
+                }
+
+                text.push('<');
+                index += 1;
+                continue;
+            }
+
+            text.push('<');
+            index += 1;
+        }
+
+        flush_text(&mut tokens, &mut text);
+        tokens
+    }
+}
+
+fn parse_start_tag(chars: &[char], start: usize) -> Option<(Token, usize)> {
+    let mut index = start + 1;
+    let name_start = index;
+
+    while index < chars.len() && is_tag_name_char(chars[index]) {
+        index += 1;
+    }
+
+    if name_start == index {
+        return None;
+    }
+
+    let name = chars[name_start..index]
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    let mut attrs = Vec::new();
+    let mut self_closing = false;
+
+    loop {
+        index = skip_spaces(chars, index);
+
+        if index >= chars.len() {
+            return None;
+        }
+
+        match chars[index] {
+            '>' => {
+                index += 1;
+                break;
+            }
+            '/' => {
+                if index + 1 < chars.len() && chars[index + 1] == '>' {
+                    self_closing = true;
+                    index += 2;
+                    break;
+                }
+
+                return None;
+            }
+            _ => {
+                let (attr, next_index) = parse_attr(chars, index)?;
+                attrs.push(attr);
+                index = next_index;
             }
         }
-
-        if !matches!(state, State::Data) {
-            return Err(TokenizeError::Eof);
-        }
-        if !text_buf.is_empty() {
-            out.push(Token::Text(decode_entities(&text_buf)));
-        }
-        Ok(out)
     }
 
-    fn buf_is_end_tag(&self, out: &[Token]) -> bool {
-        let _ = out;
-        false
+    Some((
+        Token::StartTag {
+            name,
+            attrs,
+            self_closing,
+        },
+        index,
+    ))
+}
+
+fn parse_end_tag(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut index = start + 2;
+    index = skip_spaces(chars, index);
+
+    let name_start = index;
+
+    while index < chars.len() && is_tag_name_char(chars[index]) {
+        index += 1;
     }
+
+    if name_start == index {
+        return None;
+    }
+
+    let name = chars[name_start..index]
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    index = skip_spaces(chars, index);
+
+    if index < chars.len() && chars[index] == '>' {
+        Some((name, index + 1))
+    } else {
+        None
+    }
+}
+
+fn parse_attr(chars: &[char], start: usize) -> Option<((String, String), usize)> {
+    let mut index = start;
+    let name_start = index;
+
+    while index < chars.len() && is_attr_name_char(chars[index]) {
+        index += 1;
+    }
+
+    if name_start == index {
+        return None;
+    }
+
+    let name = chars[name_start..index]
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    index = skip_spaces(chars, index);
+
+    if index >= chars.len() || chars[index] != '=' {
+        return Some(((name, String::new()), index));
+    }
+
+    index += 1;
+    index = skip_spaces(chars, index);
+
+    if index >= chars.len() {
+        return None;
+    }
+
+    let value;
+
+    match chars[index] {
+        '"' | '\'' => {
+            let quote = chars[index];
+            index += 1;
+
+            let value_start = index;
+
+            while index < chars.len() && chars[index] != quote {
+                index += 1;
+            }
+
+            if index >= chars.len() {
+                return None;
+            }
+
+            value = chars[value_start..index].iter().collect::<String>();
+            index += 1;
+        }
+        _ => {
+            let value_start = index;
+
+            while index < chars.len()
+                && !is_space(chars[index])
+                && chars[index] != '>'
+                && !(chars[index] == '/' && index + 1 < chars.len() && chars[index + 1] == '>')
+            {
+                index += 1;
+            }
+
+            value = chars[value_start..index].iter().collect::<String>();
+        }
+    }
+
+    Some(((name, decode_entities(&value)), index))
+}
+
+fn flush_text(tokens: &mut Vec<Token>, text: &mut String) {
+    if text.is_empty() {
+        return;
+    }
+
+    tokens.push(Token::Text(decode_entities(text)));
+    text.clear();
+}
+
+fn normalize_doctype_name(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    if trimmed.len() >= "doctype".len()
+        && trimmed[.."doctype".len()].eq_ignore_ascii_case("doctype")
+    {
+        return trimmed["doctype".len()..].trim().to_ascii_lowercase();
+    }
+
+    trimmed.to_ascii_lowercase()
+}
+
+fn starts_with(chars: &[char], start: usize, pattern: &str) -> bool {
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+
+    if start + pattern_chars.len() > chars.len() {
+        return false;
+    }
+
+    chars[start..start + pattern_chars.len()] == pattern_chars
+}
+
+fn find_sequence(chars: &[char], start: usize, pattern: &str) -> Option<usize> {
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+
+    if pattern_chars.is_empty() || start >= chars.len() {
+        return None;
+    }
+
+    let mut index = start;
+
+    while index + pattern_chars.len() <= chars.len() {
+        if chars[index..index + pattern_chars.len()] == pattern_chars {
+            return Some(index);
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+fn find_char(chars: &[char], start: usize, needle: char) -> Option<usize> {
+    chars
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(index, value)| (*value == needle).then_some(index))
+}
+
+fn skip_spaces(chars: &[char], mut index: usize) -> usize {
+    while index < chars.len() && is_space(chars[index]) {
+        index += 1;
+    }
+
+    index
 }
 
 fn is_space(c: char) -> bool {
     matches!(c, ' ' | '\n' | '\t' | '\r' | '\x0C')
 }
-fn is_ascii_alpha(c: char) -> bool {
-    c.is_ascii_alphabetic()
+
+fn is_tag_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':')
+}
+
+fn is_attr_name_char(c: char) -> bool {
+    !is_space(c) && !matches!(c, '=' | '/' | '>')
 }
 
 pub fn decode_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
+
     while let Some(c) = it.next() {
-        if c == '&' {
-            let mut name = String::new();
-            while let Some(&nc) = it.peek() {
-                name.push(nc);
-                it.next();
-                if nc == ';' {
-                    break;
-                }
-                if name.len() > 10 {
-                    break;
-                }
-            }
-            let decoded = match name.as_str() {
-                "lt;" => Some('<'),
-                "gt;" => Some('>'),
-                "amp;" => Some('&'),
-                "quot;" => Some('"'),
-                "apos;" => Some('\''),
-                _ => None,
-            };
-            if let Some(ch) = decoded {
-                out.push(ch);
-            } else {
-                out.push('&');
-                out.push_str(&name);
-            }
-        } else {
+        if c != '&' {
             out.push(c);
+            continue;
+        }
+
+        let mut name = String::new();
+
+        while let Some(&next_char) = it.peek() {
+            name.push(next_char);
+            it.next();
+
+            if next_char == ';' {
+                break;
+            }
+
+            if name.len() > 10 {
+                break;
+            }
+        }
+
+        let decoded = decode_entity_name(&name);
+
+        if let Some(ch) = decoded {
+            out.push(ch);
+        } else {
+            out.push('&');
+            out.push_str(&name);
         }
     }
+
     out
+}
+
+fn decode_entity_name(name: &str) -> Option<char> {
+    match name {
+        "lt;" => Some('<'),
+        "gt;" => Some('>'),
+        "amp;" => Some('&'),
+        "quot;" => Some('"'),
+        "apos;" => Some('\''),
+        "nbsp;" => Some(' '),
+        "copy;" => char::from_u32(0x00A9),
+        "reg;" => char::from_u32(0x00AE),
+        _ => decode_numeric_entity(name),
+    }
+}
+
+fn decode_numeric_entity(name: &str) -> Option<char> {
+    let body = name.strip_prefix('#')?.strip_suffix(';')?;
+
+    let codepoint = if let Some(hex) = body.strip_prefix('x').or_else(|| body.strip_prefix('X')) {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        body.parse::<u32>().ok()?
+    };
+
+    char::from_u32(codepoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_entities;
+
+    #[test]
+    fn decodes_named_and_numeric_entities() {
+        assert_eq!(
+            decode_entities("&lt;&gt;&amp;&quot;&apos;&nbsp;&copy;&#65;&#x41;"),
+            "<>&\"' \u{00A9}AA"
+        );
+    }
+
+    #[test]
+    fn preserves_unknown_entities() {
+        assert_eq!(decode_entities("&bogus;"), "&bogus;");
+    }
 }

@@ -3,7 +3,7 @@ use crate::tokenizer::{Token, Tokenizer};
 use anyhow::Result;
 
 pub fn parse(input: &str) -> Result<Document> {
-    let tokens = Tokenizer::new(input).tokenize()?;
+    let tokens = Tokenizer::new(input).tokenize();
     build_tree(tokens)
 }
 
@@ -57,7 +57,7 @@ fn build_tree(tokens: Vec<Token>) -> Result<Document> {
     Ok(doc)
 }
 
-fn append(doc: &mut Document, stack: &mut Vec<Element>, node: Node) {
+fn append(doc: &mut Document, stack: &mut [Element], node: Node) {
     if let Some(parent) = stack.last_mut() {
         parent.push(node);
     } else {

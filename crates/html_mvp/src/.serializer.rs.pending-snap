@@ -1,0 +1,72 @@
+{"run_id":"1777748283-15495900","line":126,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"void_elements","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":126,"expression":"\"voids\""},"snapshot":"voids"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<div>a<br><img></div>"}}
+{"run_id":"1777748283-15495900","line":117,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"comment_and_text","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":117,"expression":"\"comment_and_text\""},"snapshot":"comment_and_text"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<!-- hi --><div>ok<!--x--></div>"}}
+{"run_id":"1777748283-15495900","line":135,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"attrs_and_entities","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":135,"expression":"\"attrs_entities\""},"snapshot":"attrs_entities"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<a data-k=\"v\" href=\"/x?q=1&y='2'\" title=\"a &quot;b&quot; &amp; c\">lt:&lt; &gt; &amp;</a>"}}
+{"run_id":"1777748283-15495900","line":147,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"doctype_normalization","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":147,"expression":"\"doctype\""},"snapshot":"doctype"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<!DOCTYPE html><html><body>x</body></html>"}}
+{"run_id":"1777749730-931668900","line":137,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"comment_and_text","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":137,"expression":"<!-- hi --><div>ok<!--x--></div>"},"snapshot":"comment_and_text"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<!-- hi --><div>ok<!--x--></div>"}}
+{"run_id":"1777749730-931668900","line":164,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"doctype_normalization","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":164,"expression":"<!DOCTYPE html><html><body>x</body></html>"},"snapshot":"doctype"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<!DOCTYPE html><html><body>x</body></html>"}}
+{"run_id":"1777749730-931668900","line":146,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"void_elements","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":146,"expression":"<div>a<br><img></div>"},"snapshot":"voids"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<div>a<br><img></div>"}}
+{"run_id":"1777749730-931668900","line":155,"new":{"module_name":"html_mvp__serializer__tests","snapshot_name":"attrs_and_entities","metadata":{"source":"crates/html_mvp/src/serializer.rs","assertion_line":155,"expression":"<a data-k=\"v\" href=\"/x?q=1&amp;y='2'\" title=\"a &quot;b&quot; &amp; c\">lt:&lt; &gt; &amp;</a>"},"snapshot":"attrs_entities"},"old":{"module_name":"html_mvp__serializer__tests","metadata":{},"snapshot":"<a data-k=\"v\" href=\"/x?q=1&y='2'\" title=\"a &quot;b&quot; &amp; c\">lt:&lt; &gt; &amp;</a>"}}
+{"run_id":"1777749786-496612600","line":155,"new":null,"old":null}
+{"run_id":"1777749786-496612600","line":137,"new":null,"old":null}
+{"run_id":"1777749786-496612600","line":164,"new":null,"old":null}
+{"run_id":"1777749786-496612600","line":146,"new":null,"old":null}
+{"run_id":"1777749833-593559400","line":146,"new":null,"old":null}
+{"run_id":"1777749833-593559400","line":164,"new":null,"old":null}
+{"run_id":"1777749833-593559400","line":137,"new":null,"old":null}
+{"run_id":"1777749833-593559400","line":155,"new":null,"old":null}
+{"run_id":"1777749838-406803400","line":137,"new":null,"old":null}
+{"run_id":"1777749838-406803400","line":155,"new":null,"old":null}
+{"run_id":"1777749838-406803400","line":164,"new":null,"old":null}
+{"run_id":"1777749838-406803400","line":146,"new":null,"old":null}
+{"run_id":"1777749926-288214600","line":137,"new":null,"old":null}
+{"run_id":"1777749926-288214600","line":146,"new":null,"old":null}
+{"run_id":"1777749926-288214600","line":155,"new":null,"old":null}
+{"run_id":"1777749926-288214600","line":164,"new":null,"old":null}
+{"run_id":"1777750169-633870500","line":155,"new":null,"old":null}
+{"run_id":"1777750169-633870500","line":164,"new":null,"old":null}
+{"run_id":"1777750169-633870500","line":137,"new":null,"old":null}
+{"run_id":"1777750169-633870500","line":146,"new":null,"old":null}
+{"run_id":"1777750284-580469200","line":164,"new":null,"old":null}
+{"run_id":"1777750284-580469200","line":155,"new":null,"old":null}
+{"run_id":"1777750284-580469200","line":137,"new":null,"old":null}
+{"run_id":"1777750284-580469200","line":146,"new":null,"old":null}
+{"run_id":"1777750992-52044300","line":146,"new":null,"old":null}
+{"run_id":"1777750992-52044300","line":155,"new":null,"old":null}
+{"run_id":"1777750992-52044300","line":164,"new":null,"old":null}
+{"run_id":"1777750992-52044300","line":137,"new":null,"old":null}
+{"run_id":"1777751481-984404700","line":137,"new":null,"old":null}
+{"run_id":"1777751481-984404700","line":146,"new":null,"old":null}
+{"run_id":"1777751481-984404700","line":155,"new":null,"old":null}
+{"run_id":"1777751481-984404700","line":164,"new":null,"old":null}
+{"run_id":"1777751717-467492800","line":137,"new":null,"old":null}
+{"run_id":"1777751717-467492800","line":146,"new":null,"old":null}
+{"run_id":"1777751717-467492800","line":155,"new":null,"old":null}
+{"run_id":"1777751717-467492800","line":164,"new":null,"old":null}
+{"run_id":"1777752029-406916700","line":146,"new":null,"old":null}
+{"run_id":"1777752029-406916700","line":155,"new":null,"old":null}
+{"run_id":"1777752029-406916700","line":137,"new":null,"old":null}
+{"run_id":"1777752029-406916700","line":164,"new":null,"old":null}
+{"run_id":"1777752584-301064800","line":146,"new":null,"old":null}
+{"run_id":"1777752584-301064800","line":155,"new":null,"old":null}
+{"run_id":"1777752584-301064800","line":164,"new":null,"old":null}
+{"run_id":"1777752584-301064800","line":137,"new":null,"old":null}
+{"run_id":"1777753055-7240000","line":155,"new":null,"old":null}
+{"run_id":"1777753055-7240000","line":164,"new":null,"old":null}
+{"run_id":"1777753055-7240000","line":137,"new":null,"old":null}
+{"run_id":"1777753055-7240000","line":146,"new":null,"old":null}
+{"run_id":"1777753848-295838800","line":164,"new":null,"old":null}
+{"run_id":"1777753848-295838800","line":146,"new":null,"old":null}
+{"run_id":"1777753848-295838800","line":155,"new":null,"old":null}
+{"run_id":"1777753848-295838800","line":137,"new":null,"old":null}
+{"run_id":"1777754219-970131900","line":155,"new":null,"old":null}
+{"run_id":"1777754219-970131900","line":164,"new":null,"old":null}
+{"run_id":"1777754219-970131900","line":137,"new":null,"old":null}
+{"run_id":"1777754219-970131900","line":146,"new":null,"old":null}
+{"run_id":"1777754368-596966300","line":137,"new":null,"old":null}
+{"run_id":"1777754368-596966300","line":155,"new":null,"old":null}
+{"run_id":"1777754368-596966300","line":164,"new":null,"old":null}
+{"run_id":"1777754368-596966300","line":146,"new":null,"old":null}
+{"run_id":"1777755123-875987300","line":137,"new":null,"old":null}
+{"run_id":"1777755123-875987300","line":164,"new":null,"old":null}
+{"run_id":"1777755123-875987300","line":155,"new":null,"old":null}
+{"run_id":"1777755123-875987300","line":146,"new":null,"old":null}

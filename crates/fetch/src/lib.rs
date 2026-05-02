@@ -24,6 +24,8 @@ const DEFAULT_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_MAX_HEADER_BYTES: usize = 64 * 1024;
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_REQ_TIMEOUT_MS: u64 = 20_000;
+const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Sylphos/0.1 Safari/537.36";
 
 #[derive(Debug, Clone)]
 pub struct FetchConfig {
@@ -138,8 +140,13 @@ impl FetchClient {
             let req = Request::builder()
                 .method(method.clone())
                 .uri(uri)
+                .header(
+                    header::ACCEPT,
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                )
                 .header(header::ACCEPT_ENCODING, "gzip, deflate")
-                .header(header::USER_AGENT, "fetch/0.1 (+wgpu boot)")
+                .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+                .header(header::USER_AGENT, DEFAULT_USER_AGENT)
                 .body(Empty::<Bytes>::new())?;
 
             let resp = tokio::time::timeout(self.cfg.request_timeout, self.inner.request(req))
@@ -244,7 +251,7 @@ fn decode_body_stream(headers: &HeaderMap, body: ResponseBody) -> ResponseBody {
 }
 
 fn stream_reader(s: ResponseBody) -> impl AsyncBufRead {
-    let byte_stream = s.map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+    let byte_stream = s.map_err(io::Error::other);
     let r = StreamReader::new(byte_stream);
     BufReader::new(r)
 }
