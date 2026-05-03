@@ -45,6 +45,8 @@ pub mod style;
 pub mod styled;
 /// External stylesheet metadata.
 pub mod stylesheet;
+/// Text shaping, measurement, and layout helpers.
+pub mod text;
 
 pub use box_model::{
     BoxModelStylesLite, BoxStyleLite, ComputedBoxModelStyles, ComputedBoxStyle, DisplayLite,
@@ -98,6 +100,18 @@ pub use selector::{
 pub use style::{ComputedPaintStyle, StyleSheetLite};
 pub use styled::{compute_styled_document, StyledDocument, StyledNode};
 pub use stylesheet::{StyleSourceLite, StylesheetLink};
+pub use text::{
+    layout_text, measure_text, parse_font_style, parse_font_weight, parse_text_align,
+    parse_text_overflow, parse_text_transform, parse_white_space, positioned_glyphs, shape_text,
+    BreakOpportunity, FontDatabase, FontDescriptor, FontFace, FontFaceId, FontMetrics, FontRequest,
+    FontStretch, FontStyle, FontWeight, GlyphAtlasKey, GlyphAtlasRequest, GlyphCluster, GlyphId,
+    GlyphRun, PositionedGlyph, ScriptClass, ShapedText, TextAlign, TextDirection, TextEngine,
+    TextLayout, TextLine, TextMeasure, TextMetrics, TextOverflow, TextStyle, TextTransform,
+    WhiteSpace,
+};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod text_tests;

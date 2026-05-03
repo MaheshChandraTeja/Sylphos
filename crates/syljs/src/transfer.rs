@@ -1,9 +1,7 @@
 #![allow(clippy::too_many_lines)]
 #![doc = "Transferable ArrayBuffer and typed-array-lite runtime for SylJS."]
 
-use crate::{
-    JsFunction, JsHostObject, JsNativeFunction, JsObject, JsObjectKind, JsRuntimeError, JsValue, Vm,
-};
+use crate::{JsFunction, JsHostObject, JsRuntimeError, JsValue, Vm};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// Shared transfer host pointer.
@@ -294,7 +292,9 @@ fn array_buffer_slice(host: SharedTransferHost, id: ArrayBufferId) -> JsValue {
                 return Ok(JsValue::Null);
             };
 
-            let end = end.unwrap_or(snapshot.byte_length).min(snapshot.byte_length);
+            let end = end
+                .unwrap_or(snapshot.byte_length)
+                .min(snapshot.byte_length);
             let length = end.saturating_sub(start);
             let new_id = host.create_buffer(length);
 
@@ -315,15 +315,15 @@ fn create_typed_array_constructor(host: SharedTransferHost, kind: TypedArrayKind
         function: Rc::new(move |_vm, _this, args| {
             let first = args.first().cloned().unwrap_or(JsValue::Number(0.0));
 
-            let (buffer, byte_offset, length) = if let Some(existing) = array_buffer_id_from_value(&first) {
+            let (buffer, byte_offset, length) = if let Some(existing) =
+                array_buffer_id_from_value(&first)
+            {
                 let byte_offset = args.get(1).map_or(0.0, JsValue::to_number).max(0.0) as usize;
                 let snapshot = host.buffer_snapshot(existing).ok_or_else(|| {
                     JsRuntimeError::new("typed array received unknown ArrayBuffer")
                 })?;
-                let max_len = snapshot
-                    .byte_length
-                    .saturating_sub(byte_offset)
-                    / kind.bytes_per_element();
+                let max_len =
+                    snapshot.byte_length.saturating_sub(byte_offset) / kind.bytes_per_element();
                 let length = args
                     .get(2)
                     .map(|value| value.to_number().max(0.0) as usize)
@@ -418,21 +418,6 @@ impl JsHostObject for TypedArrayHost {
 }
 
 impl TypedArrayHost {
-    fn snapshot(&self) -> TypedArraySnapshot {
-        let byte_length = self.length.saturating_mul(self.kind.bytes_per_element());
-        TypedArraySnapshot {
-            kind: self.kind,
-            buffer: self.buffer,
-            byte_offset: self.byte_offset,
-            length: self.length,
-            byte_length,
-            detached: self
-                .host
-                .buffer_snapshot(self.buffer)
-                .is_some_and(|snapshot| snapshot.detached),
-        }
-    }
-
     fn read_numeric(&self, index: usize) -> f64 {
         if index >= self.length {
             return f64::NAN;
@@ -478,10 +463,12 @@ impl TypedArrayHost {
 
         match self.kind {
             TypedArrayKind::Uint8 => {
-                self.host.write_byte(self.buffer, offset, value.clamp(0.0, 255.0) as u8);
+                self.host
+                    .write_byte(self.buffer, offset, value.clamp(0.0, 255.0) as u8);
             }
             TypedArrayKind::Uint8Clamped => {
-                self.host.write_byte(self.buffer, offset, value.round().clamp(0.0, 255.0) as u8);
+                self.host
+                    .write_byte(self.buffer, offset, value.round().clamp(0.0, 255.0) as u8);
             }
             TypedArrayKind::Int32 => {
                 for (byte_index, byte) in (value as i32).to_le_bytes().iter().copied().enumerate() {
@@ -598,18 +585,30 @@ fn create_transfer_metrics_function(host: SharedTransferHost) -> JsValue {
         function: Rc::new(move |_vm, _this, _args| {
             let metrics = host.metrics();
             let object = JsValue::object();
-            object.set_property("buffersCreated", JsValue::Number(metrics.buffers_created as f64));
+            object.set_property(
+                "buffersCreated",
+                JsValue::Number(metrics.buffers_created as f64),
+            );
             object.set_property(
                 "typedArraysCreated",
                 JsValue::Number(metrics.typed_arrays_created as f64),
             );
-            object.set_property("bytesAllocated", JsValue::Number(metrics.bytes_allocated as f64));
-            object.set_property("buffersCloned", JsValue::Number(metrics.buffers_cloned as f64));
+            object.set_property(
+                "bytesAllocated",
+                JsValue::Number(metrics.bytes_allocated as f64),
+            );
+            object.set_property(
+                "buffersCloned",
+                JsValue::Number(metrics.buffers_cloned as f64),
+            );
             object.set_property(
                 "buffersTransferred",
                 JsValue::Number(metrics.buffers_transferred as f64),
             );
-            object.set_property("buffersDetached", JsValue::Number(metrics.buffers_detached as f64));
+            object.set_property(
+                "buffersDetached",
+                JsValue::Number(metrics.buffers_detached as f64),
+            );
             object.set_property("byteReads", JsValue::Number(metrics.byte_reads as f64));
             object.set_property("byteWrites", JsValue::Number(metrics.byte_writes as f64));
             Ok(object)
@@ -702,25 +701,37 @@ impl TransferHost for ResearchTransferHost {
             },
         );
         inner.metrics.buffers_created = inner.metrics.buffers_created.saturating_add(1);
-        inner.metrics.bytes_allocated =
-            inner.metrics.bytes_allocated.saturating_add(byte_length as u64);
+        inner.metrics.bytes_allocated = inner
+            .metrics
+            .bytes_allocated
+            .saturating_add(byte_length as u64);
         id
     }
 
     fn buffer_snapshot(&self, id: ArrayBufferId) -> Option<ArrayBufferSnapshot> {
-        self.inner.borrow().buffers.get(&id).map(|buffer| ArrayBufferSnapshot {
-            id,
-            byte_length: if buffer.detached { 0 } else { buffer.bytes.len() },
-            detached: buffer.detached,
-            allocated_bytes: buffer.allocated_bytes,
-        })
+        self.inner
+            .borrow()
+            .buffers
+            .get(&id)
+            .map(|buffer| ArrayBufferSnapshot {
+                id,
+                byte_length: if buffer.detached {
+                    0
+                } else {
+                    buffer.bytes.len()
+                },
+                detached: buffer.detached,
+                allocated_bytes: buffer.allocated_bytes,
+            })
     }
 
     fn read_byte(&self, id: ArrayBufferId, offset: usize) -> Option<u8> {
         let mut inner = self.inner.borrow_mut();
         inner.metrics.byte_reads = inner.metrics.byte_reads.saturating_add(1);
         let buffer = inner.buffers.get(&id)?;
-        (!buffer.detached).then(|| buffer.bytes.get(offset).copied()).flatten()
+        (!buffer.detached)
+            .then(|| buffer.bytes.get(offset).copied())
+            .flatten()
     }
 
     fn write_byte(&self, id: ArrayBufferId, offset: usize, value: u8) -> bool {
@@ -770,8 +781,10 @@ impl TransferHost for ResearchTransferHost {
     }
 
     fn structured_clone(&self, value: JsValue, transfer_list: &[JsValue]) -> JsValue {
-        self.inner.borrow_mut().metrics.structured_clones =
-            self.inner.borrow().metrics.structured_clones.saturating_add(1);
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.metrics.structured_clones = inner.metrics.structured_clones.saturating_add(1);
+        }
 
         for transferable in transfer_list {
             if let Some(id) = array_buffer_id_from_value(transferable) {
@@ -784,9 +797,9 @@ impl TransferHost for ResearchTransferHost {
         }
 
         if let Some(id) = array_buffer_id_from_value(&value) {
-            return self
-                .clone_buffer(id)
-                .map_or(JsValue::Null, |new_id| create_array_buffer_object(Rc::new(self.clone()), new_id));
+            return self.clone_buffer(id).map_or(JsValue::Null, |new_id| {
+                create_array_buffer_object(Rc::new(self.clone()), new_id)
+            });
         }
 
         value
@@ -803,12 +816,13 @@ impl TransferHost for ResearchTransferHost {
 
 impl Clone for ResearchTransferHost {
     fn clone(&self) -> Self {
+        let inner = self.inner.borrow();
         Self {
             inner: RefCell::new(TransferInner {
-                next_buffer: self.inner.borrow().next_buffer,
-                buffers: self.inner.borrow().buffers.clone(),
-                metrics: self.inner.borrow().metrics.clone(),
-                records: self.inner.borrow().records.clone(),
+                next_buffer: inner.next_buffer,
+                buffers: inner.buffers.clone(),
+                metrics: inner.metrics.clone(),
+                records: inner.records.clone(),
             }),
         }
     }

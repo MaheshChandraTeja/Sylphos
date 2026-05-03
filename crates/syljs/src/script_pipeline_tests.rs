@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
 use crate::{
-    install_cssom_globals, install_dom_globals, run_research_script_pipeline, AsyncSchedulingPolicy,
-    DirtyFlag, PipelineDocumentPhase, ResearchCssomHost, ResearchDom, ResearchReflowHooks,
-    ResearchScriptResourceLoader, ScheduledVm, ScriptDescriptor, ScriptLoadMode,
-    ScriptPipelineConfig,
+    install_cssom_globals, install_dom_globals, run_research_script_pipeline,
+    AsyncSchedulingPolicy, DirtyFlag, DomHost, PipelineDocumentPhase, ResearchCssomHost,
+    ResearchDom, ResearchReflowHooks, ResearchScriptResourceLoader, ScheduledVm, ScriptDescriptor,
+    ScriptLoadMode, ScriptPipelineConfig,
 };
 
 #[test]
@@ -104,7 +104,10 @@ fn defer_scripts_wait_until_after_parser_blocking_scripts() {
     assert_eq!(run.metrics.defer_scripts_executed, 1);
 
     let console = &run.last_summary.as_ref().unwrap().console;
-    assert_eq!(console, &vec!["parser".to_owned(), "defer parser".to_owned()]);
+    assert_eq!(
+        console,
+        &vec!["parser".to_owned(), "defer parser".to_owned()]
+    );
 }
 
 #[test]
@@ -175,7 +178,10 @@ fn missing_external_script_records_failure_when_continue_on_error() {
     assert_eq!(run.metrics.scripts_executed, 1);
     assert_eq!(run.failures.len(), 1);
     assert_eq!(hooks.failures().len(), 1);
-    assert_eq!(run.last_summary.as_ref().unwrap().console, vec!["still-runs"]);
+    assert_eq!(
+        run.last_summary.as_ref().unwrap().console,
+        vec!["still-runs"]
+    );
 }
 
 #[test]

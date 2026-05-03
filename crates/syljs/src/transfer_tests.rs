@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
-use crate::{
-    install_transfer_globals, ArrayBufferId, ResearchTransferHost, ScheduledVm, TransferHost,
-};
+use crate::{install_transfer_globals, ResearchTransferHost, ScheduledVm, TransferHost};
 
 #[test]
 fn array_buffer_and_uint8_array_read_write_work() {

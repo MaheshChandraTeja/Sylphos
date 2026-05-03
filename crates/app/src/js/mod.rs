@@ -17,6 +17,8 @@ mod media;
 mod runtime;
 mod scripts;
 mod storage;
+pub(crate) mod syljs_invalidation_bridge;
+pub(crate) mod syljs_script_pipeline_bridge;
 mod web_platform;
 
 pub(crate) use console::{ConsoleLevel, ConsoleMessage};

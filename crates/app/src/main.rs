@@ -18,6 +18,8 @@ use winit::{
 
 mod browser;
 mod js;
+mod pipeline;
+mod present_adapter;
 mod render;
 mod state;
 

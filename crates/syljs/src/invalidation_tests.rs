@@ -5,9 +5,9 @@ use crate::{
     run_research_script_pipeline, CssStyleMutation, DirtyFlag, DirtyFlags, DomNodeRef,
     DomNodeSnapshot, DomNodeType, InvalidationEngine, InvalidationImpact, InvalidationInput,
     InvalidationPriority, InvalidationReason, InvalidationScope, InvalidationSource,
-    LayoutInvalidationKind, PaintInvalidationKind, RebuildHint, ResearchInvalidationHooks,
-    ResearchScriptResourceLoader, ReflowRequest, ScheduledVm, ScriptDescriptor,
-    ScriptPipelineConfig, StyleInvalidationKind, StyleInvalidationKindLite,
+    PaintInvalidationKind, RebuildHint, ReflowRequest, ResearchInvalidationHooks,
+    ResearchScriptResourceLoader, ScheduledVm, ScriptDescriptor, ScriptPipelineConfig,
+    StyleInvalidationKind, StyleInvalidationKindLite,
 };
 
 #[test]
@@ -116,7 +116,10 @@ fn dom_snapshots_create_subtree_invalidations() {
 
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].scope, InvalidationScope::Subtree(DomNodeRef(1)));
-    assert_eq!(inputs[0].impact.style, StyleInvalidationKindLite::SelectorMatch);
+    assert_eq!(
+        inputs[0].impact.style,
+        StyleInvalidationKindLite::SelectorMatch
+    );
 }
 
 #[test]

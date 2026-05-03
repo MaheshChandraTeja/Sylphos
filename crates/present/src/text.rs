@@ -1,4 +1,15 @@
-#![allow(clippy::too_many_lines)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::missing_const_for_fn,
+    clippy::or_fun_call,
+    clippy::suboptimal_flops,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
 #![doc = "Font shaping and text measurement upgrade for Sylphos Present."]
 #![doc = ""]
 #![doc = "This module provides deterministic font fallback, glyph planning,"]
@@ -225,7 +236,7 @@ impl Default for FontRequest {
 }
 
 /// Text transform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TextTransform {
     /// none.
     None,
@@ -247,7 +258,7 @@ impl Default for TextTransform {
 }
 
 /// White-space behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WhiteSpace {
     /// normal.
     Normal,
@@ -957,7 +968,10 @@ impl TextEngine {
         let mut total_advance = 0.0;
 
         for (byte_index, ch) in normalized.char_indices() {
-            let font = self.fonts.match_face(&style.font, ch).unwrap_or(fallback_face);
+            let font = self
+                .fonts
+                .match_face(&style.font, ch)
+                .unwrap_or(fallback_face);
 
             if current_font.is_some_and(|id| id != font) && !current_clusters.is_empty() {
                 runs.push(GlyphRun {
@@ -982,7 +996,13 @@ impl TextEngine {
             let advance = if hard_break {
                 0.0
             } else {
-                glyph_advance(ch, metrics, font_size, style.letter_spacing, style.word_spacing)
+                glyph_advance(
+                    ch,
+                    metrics,
+                    font_size,
+                    style.letter_spacing,
+                    style.word_spacing,
+                )
             };
 
             let end = byte_index + ch.len_utf8();
@@ -1093,7 +1113,12 @@ impl TextEngine {
         let mut overflowed = false;
         let mut line_index = 0usize;
 
-        for cluster in shaped.runs.iter().flat_map(|run| run.clusters.iter()).cloned() {
+        for cluster in shaped
+            .runs
+            .iter()
+            .flat_map(|run| run.clusters.iter())
+            .cloned()
+        {
             if cluster.hard_break {
                 self.metrics.hard_wraps = self.metrics.hard_wraps.saturating_add(1);
                 push_line(
@@ -1168,7 +1193,14 @@ impl TextEngine {
                 if line.width > max_width {
                     overflowed = true;
                     if style.overflow == TextOverflow::Ellipsis {
-                        apply_ellipsis(line, style, &mut self.metrics, &self.fonts, max_width, shaped.font_size);
+                        apply_ellipsis(
+                            line,
+                            style,
+                            &mut self.metrics,
+                            &self.fonts,
+                            max_width,
+                            shaped.font_size,
+                        );
                     }
                 }
                 line.x = alignment_offset(style.align, style.direction, max_width, line.width);
@@ -1180,10 +1212,16 @@ impl TextEngine {
             line.y = index as f32 * shaped.line_height;
         }
 
-        self.metrics.lines_emitted = self.metrics.lines_emitted.saturating_add(lines.len() as u64);
+        self.metrics.lines_emitted = self
+            .metrics
+            .lines_emitted
+            .saturating_add(lines.len() as u64);
 
         let width = if max_width > 0.0 {
-            lines.iter().map(|line| line.width.min(max_width)).fold(0.0, f32::max)
+            lines
+                .iter()
+                .map(|line| line.width.min(max_width))
+                .fold(0.0, f32::max)
         } else {
             lines.iter().map(|line| line.width).fold(0.0, f32::max)
         };
@@ -1372,7 +1410,9 @@ fn apply_ellipsis(
         .match_face(&style.font, ellipsis)
         .or_else(|| fonts.default_face())
         .unwrap_or(FontFaceId(0));
-    let face_metrics = fonts.face(font).map_or(FontMetrics::default(), |face| face.metrics);
+    let face_metrics = fonts
+        .face(font)
+        .map_or(FontMetrics::default(), |face| face.metrics);
     let ellipsis_advance = glyph_advance(
         ellipsis,
         face_metrics,
@@ -1416,7 +1456,12 @@ fn can_break_before(cluster: &GlyphCluster, white_space: WhiteSpace) -> bool {
     }
 }
 
-fn alignment_offset(align: TextAlign, direction: TextDirection, max_width: f32, line_width: f32) -> f32 {
+fn alignment_offset(
+    align: TextAlign,
+    direction: TextDirection,
+    max_width: f32,
+    line_width: f32,
+) -> f32 {
     let remaining = (max_width - line_width).max(0.0);
 
     match (align, direction) {

@@ -6,8 +6,8 @@
 #![doc = "DOMContentLoaded, load readiness, and reflow/repaint hooks."]
 
 use crate::{
-    compile_program, parse_module, parse_script, EventLoopRunSummary, JsRuntimeError, JsValue,
-    ProgramKind, ScheduledVm, SharedWebApiHost, WebApiHost,
+    compile_program, parse_module, parse_script, CompileOptions, EventLoopRunSummary,
+    JsRuntimeError, JsValue, ProgramKind, ScheduledVm, SharedWebApiHost,
 };
 use std::{
     cell::RefCell,
@@ -136,11 +136,7 @@ impl ScriptDescriptor {
 
     /// Creates an external script.
     #[must_use]
-    pub fn external(
-        id: u64,
-        url: impl Into<String>,
-        mode: ScriptLoadMode,
-    ) -> Self {
+    pub fn external(id: u64, url: impl Into<String>, mode: ScriptLoadMode) -> Self {
         let url = url.into();
         Self {
             id,
@@ -382,19 +378,58 @@ pub struct ReflowRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineEvent {
     /// Script discovered.
-    ScriptDiscovered { script_id: u64, label: String },
+    ScriptDiscovered {
+        /// Script id.
+        script_id: u64,
+
+        /// Script label.
+        label: String,
+    },
 
     /// External script fetched.
-    ScriptFetched { script_id: u64, label: String, bytes: usize },
+    ScriptFetched {
+        /// Script id.
+        script_id: u64,
+
+        /// Script label.
+        label: String,
+
+        /// Fetched source length in bytes.
+        bytes: usize,
+    },
 
     /// Script queued.
-    ScriptQueued { script_id: u64, label: String, mode: ScriptLoadMode },
+    ScriptQueued {
+        /// Script id.
+        script_id: u64,
+
+        /// Script label.
+        label: String,
+
+        /// Script load mode.
+        mode: ScriptLoadMode,
+    },
 
     /// Script started.
-    ScriptStarted { script_id: u64, label: String, mode: ScriptLoadMode },
+    ScriptStarted {
+        /// Script id.
+        script_id: u64,
+
+        /// Script label.
+        label: String,
+
+        /// Script load mode.
+        mode: ScriptLoadMode,
+    },
 
     /// Script finished.
-    ScriptFinished { script_id: u64, label: String },
+    ScriptFinished {
+        /// Script id.
+        script_id: u64,
+
+        /// Script label.
+        label: String,
+    },
 
     /// Script failed.
     ScriptFailed(ScriptExecutionFailure),
@@ -505,7 +540,9 @@ pub struct WebApiScriptResourceLoader {
 
 impl fmt::Debug for WebApiScriptResourceLoader {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("WebApiScriptResourceLoader").finish_non_exhaustive()
+        formatter
+            .debug_struct("WebApiScriptResourceLoader")
+            .finish_non_exhaustive()
     }
 }
 
@@ -706,7 +743,8 @@ impl ScriptPipeline {
                 self.execute_or_record_error(scheduled, descriptor)?;
             }
             ScriptLoadMode::Async => {
-                self.metrics.async_scripts_queued = self.metrics.async_scripts_queued.saturating_add(1);
+                self.metrics.async_scripts_queued =
+                    self.metrics.async_scripts_queued.saturating_add(1);
                 self.events.push(PipelineEvent::ScriptQueued {
                     script_id: descriptor.id,
                     label: descriptor.label.clone(),
@@ -719,7 +757,8 @@ impl ScriptPipeline {
                 }
             }
             ScriptLoadMode::Defer => {
-                self.metrics.defer_scripts_queued = self.metrics.defer_scripts_queued.saturating_add(1);
+                self.metrics.defer_scripts_queued =
+                    self.metrics.defer_scripts_queued.saturating_add(1);
                 self.events.push(PipelineEvent::ScriptQueued {
                     script_id: descriptor.id,
                     label: descriptor.label.clone(),
@@ -852,11 +891,17 @@ impl ScriptPipeline {
             self.metrics.current_script_sets = self.metrics.current_script_sets.saturating_add(1);
         }
 
-        let result = execute_source(scheduled, descriptor.kind, &source, self.config.drain_after_each_script);
+        let result = execute_source(
+            scheduled,
+            descriptor.kind,
+            &source,
+            self.config.drain_after_each_script,
+        );
 
         if self.config.manage_current_script {
             set_current_script(&mut scheduled.vm, None);
-            self.metrics.current_script_clears = self.metrics.current_script_clears.saturating_add(1);
+            self.metrics.current_script_clears =
+                self.metrics.current_script_clears.saturating_add(1);
         }
 
         let summary = match result {
@@ -872,8 +917,13 @@ impl ScriptPipeline {
 
         self.bump_execution_counter(descriptor.mode);
 
-        if let Some(summary) = summary.clone() {
-            self.last_summary = Some(summary);
+        if let Some(mut latest_summary) = summary.clone() {
+            if let Some(previous_summary) = &self.last_summary {
+                let mut console = previous_summary.console.clone();
+                console.extend(latest_summary.console);
+                latest_summary.console = console;
+            }
+            self.last_summary = Some(latest_summary);
         }
 
         if self.config.conservative_reflow_after_script {
@@ -967,7 +1017,7 @@ fn execute_source(
     }
     .map_err(JsRuntimeError::from_frontend_error)?;
 
-    let bytecode = compile_program(&program, Default::default()).map_err(Into::into)?;
+    let bytecode = compile_program(&program, CompileOptions::default())?;
     let _ = scheduled.vm.execute(&bytecode)?;
 
     if drain_after {
@@ -989,18 +1039,39 @@ fn set_current_script(vm: &mut crate::Vm, descriptor: Option<&ScriptDescriptor>)
 
 fn create_current_script_object(descriptor: &ScriptDescriptor) -> JsValue {
     let object = JsValue::object();
-    object.set_property("id", JsValue::String(format!("syljs-script-{}", descriptor.id)));
-    object.set_property("src", JsValue::String(match &descriptor.source {
-        ScriptSource::External { url } => url.clone(),
-        ScriptSource::Inline { .. } => String::new(),
-    }));
-    object.set_property("async", JsValue::Boolean(descriptor.mode == ScriptLoadMode::Async));
-    object.set_property("defer", JsValue::Boolean(descriptor.mode == ScriptLoadMode::Defer));
-    object.set_property("type", JsValue::String(match descriptor.kind {
-        ScriptKind::Classic => "text/javascript",
-        ScriptKind::Module => "module",
-    }.to_owned()));
-    object.set_property("parserInserted", JsValue::Boolean(descriptor.parser_inserted));
+    object.set_property(
+        "id",
+        JsValue::String(format!("syljs-script-{}", descriptor.id)),
+    );
+    object.set_property(
+        "src",
+        JsValue::String(match &descriptor.source {
+            ScriptSource::External { url } => url.clone(),
+            ScriptSource::Inline { .. } => String::new(),
+        }),
+    );
+    object.set_property(
+        "async",
+        JsValue::Boolean(descriptor.mode == ScriptLoadMode::Async),
+    );
+    object.set_property(
+        "defer",
+        JsValue::Boolean(descriptor.mode == ScriptLoadMode::Defer),
+    );
+    object.set_property(
+        "type",
+        JsValue::String(
+            match descriptor.kind {
+                ScriptKind::Classic => "text/javascript",
+                ScriptKind::Module => "module",
+            }
+            .to_owned(),
+        ),
+    );
+    object.set_property(
+        "parserInserted",
+        JsValue::Boolean(descriptor.parser_inserted),
+    );
     object
 }
 

@@ -1,7 +1,7 @@
 use crate::text::{
     layout_text, measure_text, parse_font_weight, positioned_glyphs, shape_text, FontDatabase,
-    FontDescriptor, FontFaceId, FontMetrics, FontRequest, FontStyle, FontWeight, ScriptClass,
-    TextAlign, TextDirection, TextEngine, TextOverflow, TextStyle, TextTransform, WhiteSpace,
+    FontDescriptor, FontMetrics, FontRequest, FontStyle, FontWeight, ScriptClass, TextAlign,
+    TextDirection, TextEngine, TextOverflow, TextStyle, TextTransform, WhiteSpace,
 };
 
 #[test]
@@ -75,7 +75,11 @@ fn nowrap_keeps_single_line() {
         ..TextStyle::default()
     };
 
-    let layout = layout_text("This line refuses to wrap because CSS said so", &style, 80.0);
+    let layout = layout_text(
+        "This line refuses to wrap because CSS said so",
+        &style,
+        80.0,
+    );
 
     assert_eq!(layout.lines.len(), 1);
     assert!(layout.overflowed);
@@ -175,7 +179,7 @@ fn custom_font_registration_is_used() {
             family: "Test Sans".to_owned(),
             weight: FontWeight::NORMAL,
             style: FontStyle::Normal,
-            stretch: Default::default(),
+            stretch: crate::text::FontStretch::default(),
             monospace: false,
             emoji: false,
         },

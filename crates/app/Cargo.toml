@@ -30,6 +30,7 @@ util = { path = "../util" }
 fetch = { path = "../fetch" }
 html_mvp = { path = "../html_mvp" }
 present = { path = "../present" }
+syljs = { path = "../syljs" }
 
 [build-dependencies]
 winresource = "0.1"

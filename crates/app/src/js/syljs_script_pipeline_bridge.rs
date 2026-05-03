@@ -4,11 +4,13 @@
 //! "scripts participate in document loading and request reflow." The web still
 //! remains a swamp, naturally, but now the swamp has order forms.
 
+#![allow(dead_code)]
+
 use std::rc::Rc;
 
 use syljs::{
     run_research_script_pipeline, AsyncSchedulingPolicy, EventLoopConfig, JsRuntimeError,
-    PipelineEvent, ProgramKind, ResearchReflowHooks, ResearchScriptResourceLoader, ScheduledVm,
+    PipelineEvent, ResearchReflowHooks, ResearchScriptResourceLoader, ScheduledVm,
     ScriptDescriptor, ScriptKind, ScriptLoadMode, ScriptPipelineConfig, ScriptPipelineMetrics,
     ScriptPipelineRun, ScriptSource, SharedScriptPipelineHooks, SharedScriptResourceLoader,
     VmConfig,
@@ -117,13 +119,7 @@ pub(crate) fn execute_app_script_pipeline(
         .map(app_script_to_descriptor)
         .collect::<Vec<_>>();
 
-    let run = run_research_script_pipeline(
-        scheduled,
-        scripts,
-        loader,
-        hooks.clone(),
-        config,
-    )?;
+    let run = run_research_script_pipeline(scheduled, scripts, loader, hooks.clone(), config)?;
 
     Ok(response_from_run(run, hooks))
 }

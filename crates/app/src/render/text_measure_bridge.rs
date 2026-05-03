@@ -3,23 +3,17 @@
 //! The renderer should use this instead of guessing text width with vibes and
 //! regret. Guessing was cute for ten modules. Now it is how layouts get cursed.
 
+#![allow(dead_code)]
+
 use present::text::{
     layout_text, measure_text, positioned_glyphs, shape_text, FontDatabase, GlyphAtlasRequest,
     PositionedGlyph, ShapedText, TextEngine, TextLayout, TextMeasure, TextMetrics, TextStyle,
 };
 
 /// App-owned text runtime.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AppTextRuntime {
     engine: TextEngine,
-}
-
-impl Default for AppTextRuntime {
-    fn default() -> Self {
-        Self {
-            engine: TextEngine::default(),
-        }
-    }
 }
 
 impl AppTextRuntime {

@@ -1,5 +1,7 @@
 //! JS/app bridge for Module 40 invalidation integration.
 
+#![allow(dead_code)]
+
 use std::{cell::RefCell, rc::Rc};
 
 use syljs::{

@@ -6,6 +6,7 @@ use crate::{
     event_loop::JsEventLoop,
     JsFunction, JsHostObject, JsNativeFunction, JsObject, JsObjectKind, JsRuntimeError, JsValue,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -16,7 +17,7 @@ use std::{
 pub type SharedDomHost = Rc<dyn DomHost>;
 
 /// Stable DOM node reference exposed to SylJS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DomNodeRef(pub u64);
 
 /// DOM node type.

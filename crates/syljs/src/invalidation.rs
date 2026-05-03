@@ -6,14 +6,16 @@
 #![doc = "that the app renderer can use to rebuild layout trees and PaintPlans."]
 
 use crate::{
-    CssStyleMutation, DirtyFlag, DirtyFlags, DomNodeRef, DomNodeSnapshot, DomNodeType,
-    ReflowRequest, ScriptDescriptor, ScriptExecutionFailure, ScriptPipelineHooks,
-    StyleInvalidationKind,
+    script_pipeline::{
+        DirtyFlag, DirtyFlags, ReflowRequest, ScriptDescriptor, ScriptExecutionFailure,
+        ScriptPipelineHooks,
+    },
+    CssStyleMutation, DomNodeRef, DomNodeSnapshot, DomNodeType, StyleInvalidationKind,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeSet, VecDeque},
     fmt,
     rc::Rc,
 };
@@ -60,6 +62,12 @@ pub enum InvalidationPriority {
 
     /// Must be flushed immediately.
     Critical,
+}
+
+impl Default for InvalidationPriority {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 /// Invalidation scope.
@@ -223,6 +231,12 @@ pub enum RebuildHint {
 
     /// Full render pipeline.
     FullPipeline,
+}
+
+impl Default for RebuildHint {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// Invalidation impact.
@@ -535,10 +549,12 @@ impl InvalidationCoalescer {
             priority = priority.max(input.priority);
             reasons.insert(input.reason.code.clone());
 
-            scope = Some(match (scope.clone(), normalize_scope(&self.config, &input.scope)) {
-                (None, new_scope) => new_scope,
-                (Some(existing), new_scope) => merge_scope(&self.config, existing, new_scope),
-            });
+            scope = Some(
+                match (scope.clone(), normalize_scope(&self.config, &input.scope)) {
+                    (None, new_scope) => new_scope,
+                    (Some(existing), new_scope) => merge_scope(&self.config, existing, new_scope),
+                },
+            );
 
             rect = match (rect, input.rect) {
                 (None, new_rect) => new_rect,
@@ -636,8 +652,7 @@ impl InvalidationEngine {
                 self.metrics.paint_plan_rebuild_plans.saturating_add(1);
         }
         if plan.full_viewport_paint {
-            self.metrics.viewport_paint_plans =
-                self.metrics.viewport_paint_plans.saturating_add(1);
+            self.metrics.viewport_paint_plans = self.metrics.viewport_paint_plans.saturating_add(1);
         }
 
         self.push_event(InvalidationEvent::PlanProduced(plan.clone()));
@@ -690,7 +705,10 @@ impl InvalidationEngine {
             };
         }
 
-        let impact = batch.impact.clone().unwrap_or_else(InvalidationImpact::none);
+        let impact = batch
+            .impact
+            .clone()
+            .unwrap_or_else(InvalidationImpact::none);
         let priority = batch.priority.unwrap_or(InvalidationPriority::Normal);
         let scope = batch.scope.clone().unwrap_or(InvalidationScope::Document);
 
@@ -698,14 +716,21 @@ impl InvalidationEngine {
         let mut layout_nodes = BTreeSet::new();
         let mut paint_nodes = BTreeSet::new();
 
-        let restyle_document = matches!(scope, InvalidationScope::Document | InvalidationScope::Viewport)
-            || impact.style >= StyleInvalidationKindLite::Cascade;
+        let restyle_document = matches!(
+            scope,
+            InvalidationScope::Document | InvalidationScope::Viewport
+        ) || impact.style >= StyleInvalidationKindLite::Cascade;
 
         let mut rebuild_layout_tree = matches!(
             impact.layout,
             LayoutInvalidationKind::Tree | LayoutInvalidationKind::Viewport
-        ) || matches!(scope, InvalidationScope::Document | InvalidationScope::Viewport)
-            && impact.layout != LayoutInvalidationKind::None;
+        ) || matches!(
+            impact.rebuild,
+            RebuildHint::LayoutTree | RebuildHint::FullPipeline
+        ) || matches!(
+            scope,
+            InvalidationScope::Document | InvalidationScope::Viewport
+        ) && impact.layout != LayoutInvalidationKind::None;
 
         if self.config.restyle_before_layout && rebuild_layout_tree {
             // Whole-tree layout rebuild requires a fresh style pass.
@@ -720,8 +745,10 @@ impl InvalidationEngine {
             rebuild_paint_plan = true;
         }
 
-        let full_viewport_paint = matches!(scope, InvalidationScope::Document | InvalidationScope::Viewport)
-            || impact.paint == PaintInvalidationKind::Viewport
+        let full_viewport_paint = matches!(
+            scope,
+            InvalidationScope::Document | InvalidationScope::Viewport
+        ) || impact.paint == PaintInvalidationKind::Viewport
             || impact.rebuild == RebuildHint::FullPipeline;
 
         match scope {
@@ -750,7 +777,9 @@ impl InvalidationEngine {
                     rebuild_layout_tree = true;
                 }
             }
-            InvalidationScope::Document | InvalidationScope::Viewport | InvalidationScope::Unknown => {
+            InvalidationScope::Document
+            | InvalidationScope::Viewport
+            | InvalidationScope::Unknown => {
                 rebuild_layout_tree |= impact.layout != LayoutInvalidationKind::None;
                 rebuild_paint_plan |= impact.paint != PaintInvalidationKind::None;
             }
@@ -824,7 +853,9 @@ fn merge_scope(
                 existing
             }
         }
-        (InvalidationScope::Viewport, _) | (_, InvalidationScope::Viewport) => InvalidationScope::Viewport,
+        (InvalidationScope::Viewport, _) | (_, InvalidationScope::Viewport) => {
+            InvalidationScope::Viewport
+        }
         (InvalidationScope::Subtree(a), InvalidationScope::Node(b)) if a == b => existing,
         (InvalidationScope::Node(a), InvalidationScope::Subtree(b)) if a == b => new_scope,
         (InvalidationScope::Node(a), InvalidationScope::Node(b)) if a == b => existing,
@@ -942,9 +973,7 @@ pub fn collect_cssom_mutation_invalidations(
 
 /// Converts DOM snapshots into conservative invalidation inputs.
 #[must_use]
-pub fn collect_dom_snapshot_invalidations(
-    snapshots: &[DomNodeSnapshot],
-) -> Vec<InvalidationInput> {
+pub fn collect_dom_snapshot_invalidations(snapshots: &[DomNodeSnapshot]) -> Vec<InvalidationInput> {
     snapshots
         .iter()
         .filter_map(|snapshot| {
@@ -1078,22 +1107,26 @@ impl ScriptPipelineHooks for ResearchInvalidationHooks {
     fn dom_content_loaded(&self) {
         let mut dirty = DirtyFlags::default();
         dirty.insert(DirtyFlag::Lifecycle);
-        self.engine.borrow_mut().consume_reflow_request(&ReflowRequest {
-            script_id: None,
-            label: "DOMContentLoaded".to_owned(),
-            dirty,
-            reason: "DOMContentLoaded".to_owned(),
-        });
+        self.engine
+            .borrow_mut()
+            .consume_reflow_request(&ReflowRequest {
+                script_id: None,
+                label: "DOMContentLoaded".to_owned(),
+                dirty,
+                reason: "DOMContentLoaded".to_owned(),
+            });
     }
 
     fn load(&self) {
         let mut dirty = DirtyFlags::default();
         dirty.insert(DirtyFlag::Lifecycle);
-        self.engine.borrow_mut().consume_reflow_request(&ReflowRequest {
-            script_id: None,
-            label: "load".to_owned(),
-            dirty,
-            reason: "load".to_owned(),
-        });
+        self.engine
+            .borrow_mut()
+            .consume_reflow_request(&ReflowRequest {
+                script_id: None,
+                label: "load".to_owned(),
+                dirty,
+                reason: "load".to_owned(),
+            });
     }
 }

@@ -42,6 +42,9 @@ pub mod dom;
 /// JavaScript event loop, timers, tasks, microtasks, and RAF.
 pub mod event_loop;
 
+/// Style/layout/paint invalidation bridge.
+pub mod invalidation;
+
 /// Lexer implementation.
 pub mod lexer;
 
@@ -62,6 +65,12 @@ pub mod token;
 
 /// Runtime values and heap objects.
 pub mod value;
+
+/// Script loading and execution pipeline.
+pub mod script_pipeline;
+
+/// Transferable ArrayBuffer and typed-array-lite runtime.
+pub mod transfer;
 
 /// AST visitor and statistics helpers.
 pub mod visit;
@@ -107,6 +116,15 @@ pub use event_loop::{
     install_event_loop_globals, EventLoopConfig, EventLoopMetrics, EventLoopRunSummary,
     JsEventLoop, QueuedJob, QueuedJobKind, RafId, ScheduledVm, TaskId, TimerId,
 };
+pub use invalidation::{
+    apply_reflow_request_to_invalidation_engine, collect_cssom_mutation_invalidations,
+    collect_dom_snapshot_invalidations, InvalidationBatch, InvalidationCoalescer,
+    InvalidationConfig, InvalidationEngine, InvalidationEvent, InvalidationImpact,
+    InvalidationInput, InvalidationMetrics, InvalidationNode, InvalidationPlan,
+    InvalidationPriority, InvalidationReason, InvalidationRect, InvalidationScope,
+    InvalidationSource, LayoutInvalidationKind, PaintInvalidationKind, RebuildHint,
+    ResearchInvalidationHooks, SharedInvalidationEngine, StyleInvalidationKindLite,
+};
 pub use lexer::Lexer;
 pub use media::{
     install_media_globals, BufferedRange, MediaElementId, MediaElementKind, MediaElementSnapshot,
@@ -119,8 +137,22 @@ pub use promise::{
     create_promise_constructor, create_rejected_promise_value, create_resolved_promise_value,
     PromiseInspection, PromiseState,
 };
+pub use script_pipeline::{
+    run_research_script_pipeline, AsyncSchedulingPolicy, DirtyFlag, DirtyFlags,
+    PipelineDocumentPhase, PipelineEvent, PipelineScriptRun, ReflowRequest, ResearchReflowHooks,
+    ResearchScriptResourceLoader, ScriptDescriptor, ScriptExecutionFailure, ScriptKind,
+    ScriptLoadMode, ScriptPipelineConfig, ScriptPipelineHooks, ScriptPipelineMetrics,
+    ScriptPipelineRun, ScriptResourceLoader, ScriptSource, SharedScriptPipelineHooks,
+    SharedScriptResourceLoader, WebApiScriptResourceLoader,
+};
 pub use span::{SourceId, Span};
 pub use token::{Keyword, Token, TokenKind};
+pub use transfer::{
+    array_buffer_id_from_value, create_array_buffer_object, install_transfer_globals,
+    transfer_list_from_value, ArrayBufferId, ArrayBufferSnapshot, ResearchTransferHost,
+    SharedTransferHost, TransferHost, TransferMetrics, TransferMode, TransferRecord,
+    TypedArrayKind, TypedArraySnapshot,
+};
 pub use value::{
     JsFunction, JsHostObject, JsNativeFunction, JsObject, JsObjectKind, JsRuntimeError, JsValue,
     NativeResult,
@@ -309,3 +341,12 @@ mod canvas_worker_tests;
 
 #[cfg(test)]
 mod benchmark_tests;
+
+#[cfg(test)]
+mod invalidation_tests;
+
+#[cfg(test)]
+mod script_pipeline_tests;
+
+#[cfg(test)]
+mod transfer_tests;
