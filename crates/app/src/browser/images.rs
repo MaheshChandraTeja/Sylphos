@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use tracing::{debug, warn};
 
 use crate::{
-    browser::{resolve_link_url, CacheSource, CacheStore},
+    browser::{resolve_link_url, CacheSource, CacheStore, ResourceRequest, ResourceScheduler},
     render::{DecodedImage, DecodedImageStore},
 };
 
@@ -69,10 +69,21 @@ pub(crate) fn resolve_document_image_sources(base_url: &str, document: &mut Rend
     }
 }
 
+#[allow(dead_code)]
 pub(crate) async fn fetch_decode_images(
     base_url: &str,
     document: &RenderDocument,
     cache: &CacheStore,
+) -> ImageLoadSummary {
+    let scheduler = ResourceScheduler::new(cache.clone());
+    fetch_decode_images_with_scheduler(base_url, document, &scheduler).await
+}
+
+/// Discovers, fetches, decodes, and downscales document images through the shared resource scheduler.
+pub(crate) async fn fetch_decode_images_with_scheduler(
+    base_url: &str,
+    document: &RenderDocument,
+    scheduler: &ResourceScheduler,
 ) -> ImageLoadSummary {
     let urls = collect_image_urls(base_url, document);
     let discovered = urls.len();
@@ -84,7 +95,7 @@ pub(crate) async fn fetch_decode_images(
     let mut disabled_fetches = 0usize;
 
     for url in urls.into_iter().take(MAX_IMAGES_PER_PAGE) {
-        match fetch_decode_image(&url, cache).await {
+        match fetch_decode_image(&url, scheduler).await {
             Ok((image, source)) => {
                 match source {
                     CacheSource::Memory => memory_hits = memory_hits.saturating_add(1),
@@ -146,10 +157,15 @@ fn collect_image_urls(base_url: &str, document: &RenderDocument) -> Vec<String> 
     urls.into_iter().collect()
 }
 
-async fn fetch_decode_image(url: &str, cache: &CacheStore) -> Result<(DecodedImage, CacheSource)> {
-    let cached = cache.get_or_fetch_bytes(url, MAX_IMAGE_BYTES).await?;
-    let image = decode_image_bytes(&cached.url, &cached.bytes)?;
-    Ok((image, cached.source))
+async fn fetch_decode_image(
+    url: &str,
+    scheduler: &ResourceScheduler,
+) -> Result<(DecodedImage, CacheSource)> {
+    let resource = scheduler
+        .fetch_bytes(ResourceRequest::image(url.to_owned()).max_bytes(MAX_IMAGE_BYTES))
+        .await?;
+    let image = decode_image_bytes(&resource.url, &resource.bytes)?;
+    Ok((image, resource.source))
 }
 
 fn decode_image_bytes(url: &str, bytes: &[u8]) -> Result<DecodedImage> {

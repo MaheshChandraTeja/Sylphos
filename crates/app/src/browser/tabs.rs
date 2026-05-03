@@ -275,6 +275,22 @@ impl TabManager {
             .map_or_else(TabContentSnapshot::default, |tab| tab.content.clone())
     }
 
+    /// Returns a clone of the active tab document.
+    #[must_use]
+    pub(crate) fn active_document(&self) -> Option<RenderDocument> {
+        self.active_tab()
+            .and_then(|tab| tab.content.document.clone())
+    }
+
+    /// Replaces the active tab document without changing image state.
+    pub(crate) fn set_active_document(&mut self, document: RenderDocument) -> bool {
+        let Some(tab) = self.active_tab_mut() else {
+            return false;
+        };
+        tab.content.document = Some(document);
+        true
+    }
+
     /// Returns immutable tab snapshots for chrome rendering.
     #[must_use]
     pub(crate) fn snapshots(&self) -> Vec<TabSnapshot> {
@@ -362,5 +378,12 @@ mod tests {
         assert_eq!(tabs.active_id(), first);
         assert!(tabs.close_tab(first));
         assert_eq!(tabs.active_id(), second);
+    }
+
+    #[test]
+    fn active_document_can_be_replaced() {
+        let mut tabs = TabManager::new("https://example.com/".to_owned());
+        assert!(tabs.set_active_document(RenderDocument::new()));
+        assert!(tabs.active_document().is_some());
     }
 }

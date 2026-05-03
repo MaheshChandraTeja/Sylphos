@@ -1,0 +1,42 @@
+// Module 40 additions for crates/syljs/src/lib.rs:
+//
+// Add module:
+//
+// pub mod invalidation;
+//
+// Add exports:
+//
+// pub use invalidation::{
+//     apply_reflow_request_to_invalidation_engine,
+//     collect_cssom_mutation_invalidations,
+//     collect_dom_snapshot_invalidations,
+//     InvalidationBatch,
+//     InvalidationCoalescer,
+//     InvalidationConfig,
+//     InvalidationEngine,
+//     InvalidationEvent,
+//     InvalidationImpact,
+//     InvalidationInput,
+//     InvalidationMetrics,
+//     InvalidationNode,
+//     InvalidationPlan,
+//     InvalidationPriority,
+//     InvalidationReason,
+//     InvalidationRect,
+//     InvalidationScope,
+//     InvalidationSource,
+//     LayoutInvalidationKind,
+//     PaintInvalidationKind,
+//     RebuildHint,
+//     ResearchInvalidationHooks,
+//     SharedInvalidationEngine,
+//     StyleInvalidationKindLite,
+// };
+//
+// Add test module:
+//
+// #[cfg(test)]
+// mod invalidation_tests;
+//
+// This file is additive so it will not stomp your local lib.rs, because apparently
+// source control exists but humans still paste giant files into existence. Sensible.

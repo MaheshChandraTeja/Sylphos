@@ -1,8 +1,8 @@
 #![doc = "Hit-testing helpers for presentation-layer interaction."]
 
 use crate::{
-    layout_document, measure_line_height, measure_text_width, LayoutBoxKind, LayoutRect,
-    RenderDocument,
+    layout_document, measure_line_height, measure_text_width, FormControlKind, LayoutBoxKind,
+    LayoutRect, RenderDocument,
 };
 
 /// A clickable link region generated from the viewport layout tree.
@@ -28,10 +28,42 @@ pub struct LinkHitResult {
     pub text: String,
 }
 
+/// A clickable/focusable form-control region generated from layout.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormControlHitRegion {
+    /// Parent form id.
+    pub form_id: u64,
+
+    /// Control id.
+    pub control_id: u64,
+
+    /// Control kind.
+    pub kind: FormControlKind,
+
+    /// Optional name attribute.
+    pub name: Option<String>,
+
+    /// Clickable rectangle in page-local logical pixels.
+    pub rect: LayoutRect,
+}
+
+/// Result returned from a form-control hit-test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormControlHitResult {
+    /// Parent form id.
+    pub form_id: u64,
+
+    /// Control id.
+    pub control_id: u64,
+
+    /// Control kind.
+    pub kind: FormControlKind,
+
+    /// Optional name attribute.
+    pub name: Option<String>,
+}
+
 /// Builds clickable link regions for a document at the given viewport size.
-///
-/// Coordinates are page-local. If the app has browser chrome above the page,
-/// subtract the chrome height before calling [`hit_test_link`].
 #[must_use]
 pub fn collect_link_hit_regions(
     doc: &RenderDocument,
@@ -42,16 +74,22 @@ pub fn collect_link_hit_regions(
     let mut regions = Vec::new();
 
     for layout_box in &layout.boxes {
-        let LayoutBoxKind::Link { href: Some(href) } = &layout_box.kind else {
-            continue;
+        let box_href = match &layout_box.kind {
+            LayoutBoxKind::Link { href } => href.clone(),
+            _ => None,
         };
-
-        if href.trim().is_empty() {
-            continue;
-        }
 
         for run in &layout_box.text_runs {
             if run.text.trim().is_empty() {
+                continue;
+            }
+
+            let href = run.href.clone().or_else(|| box_href.clone());
+            let Some(href) = href else {
+                continue;
+            };
+
+            if href.trim().is_empty() {
                 continue;
             }
 
@@ -63,7 +101,7 @@ pub fn collect_link_hit_regions(
             );
 
             regions.push(LinkHitRegion {
-                href: href.clone(),
+                href,
                 text: run.text.clone(),
                 rect,
             });
@@ -88,6 +126,59 @@ pub fn hit_test_link(
         .map(|region| LinkHitResult {
             href: region.href,
             text: region.text,
+        })
+}
+
+/// Builds form-control hit regions for a document at the given viewport size.
+#[must_use]
+pub fn collect_form_control_hit_regions(
+    doc: &RenderDocument,
+    width: f32,
+    height: f32,
+) -> Vec<FormControlHitRegion> {
+    let layout = layout_document(doc, width, height);
+    let mut regions = Vec::new();
+
+    for layout_box in &layout.boxes {
+        let LayoutBoxKind::FormControl {
+            form_id,
+            control_id,
+            kind,
+            name,
+        } = &layout_box.kind
+        else {
+            continue;
+        };
+
+        regions.push(FormControlHitRegion {
+            form_id: *form_id,
+            control_id: *control_id,
+            kind: *kind,
+            name: name.clone(),
+            rect: layout_box.rect,
+        });
+    }
+
+    regions
+}
+
+/// Hit-tests form controls in page-local coordinates.
+#[must_use]
+pub fn hit_test_form_control(
+    doc: &RenderDocument,
+    width: f32,
+    height: f32,
+    x: f32,
+    y: f32,
+) -> Option<FormControlHitResult> {
+    collect_form_control_hit_regions(doc, width, height)
+        .into_iter()
+        .find(|region| contains(region.rect, x, y))
+        .map(|region| FormControlHitResult {
+            form_id: region.form_id,
+            control_id: region.control_id,
+            kind: region.kind,
+            name: region.name,
         })
 }
 

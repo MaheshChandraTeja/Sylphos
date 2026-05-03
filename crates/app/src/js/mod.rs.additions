@@ -1,0 +1,7 @@
+// Add this line to crates/app/src/js/mod.rs:
+//
+// pub(crate) mod syljs_invalidation_bridge;
+//
+// Optional re-export:
+//
+// pub(crate) use syljs_invalidation_bridge::AppInvalidationRuntime;

@@ -1,0 +1,19 @@
+[package]
+name = "syljs"
+version = "0.12.0"
+edition.workspace = true
+license.workspace = true
+description = "Research-grade JavaScript subset VM with DOM, CSSOM, Web APIs, media, Canvas, isolated Workers, transferables, script pipeline, and benchmark harness"
+rust-version = "1.74"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

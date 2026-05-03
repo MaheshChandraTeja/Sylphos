@@ -1,0 +1,7 @@
+# Module 42 requires no new dependencies.
+#
+# Future optional upgrade:
+# rustybuzz = "0.20"
+# ttf-parser = "0.25"
+#
+# For now, the module is dependency-light and deterministic.

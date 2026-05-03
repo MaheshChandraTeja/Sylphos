@@ -1,5 +1,6 @@
 #![doc = "Deterministic paint plan generation from viewport layout."]
 
+use crate::box_model::EdgeSizes;
 use crate::{layout_document, Color, LayoutBoxKind, LayoutTree, RenderDocument};
 
 /// Deterministic paint plan for the renderer.
@@ -55,11 +56,6 @@ pub enum PaintCommand {
     },
 
     /// Image command.
-    ///
-    /// This command identifies a source image and a rectangle where that image
-    /// should be drawn. The app renderer owns runtime fetching, decoding, and
-    /// texture upload. If the image is unavailable, the renderer draws the
-    /// supplied background as a deterministic placeholder.
     Image {
         /// Left position in logical pixels.
         x: f32,
@@ -98,7 +94,7 @@ pub fn build_paint_plan_from_layout(layout: &LayoutTree) -> PaintPlan {
         layout
             .boxes
             .iter()
-            .map(|layout_box| layout_box.text_runs.len().saturating_add(1))
+            .map(|layout_box| layout_box.text_runs.len().saturating_add(3))
             .sum::<usize>()
             .saturating_add(1),
     );
@@ -112,27 +108,44 @@ pub fn build_paint_plan_from_layout(layout: &LayoutTree) -> PaintPlan {
     });
 
     for layout_box in &layout.boxes {
-        if let LayoutBoxKind::Image { src, alt } = &layout_box.kind {
-            commands.push(PaintCommand::Image {
+        let border_widths = layout_box
+            .border
+            .as_ref()
+            .map_or_else(EdgeSizes::zero, |border| border.widths);
+        let content_rect = layout_box.rect.inset(border_widths);
+
+        if let Some(border) = &layout_box.border {
+            commands.push(PaintCommand::Rect {
                 x: layout_box.rect.x,
                 y: layout_box.rect.y,
                 width: layout_box.rect.width,
                 height: layout_box.rect.height,
+                color: border.color,
+            });
+        }
+
+        if let LayoutBoxKind::Image { src, alt } = &layout_box.kind {
+            let background = layout_box
+                .background
+                .unwrap_or_else(|| placeholder_from_background(layout.background));
+            commands.push(PaintCommand::Image {
+                x: content_rect.x,
+                y: content_rect.y,
+                width: content_rect.width,
+                height: content_rect.height,
                 src: src.clone(),
                 alt: alt.clone(),
-                background: layout_box
-                    .background
-                    .unwrap_or_else(|| placeholder_from_background(layout.background)),
+                background,
             });
             continue;
         }
 
         if let Some(color) = layout_box.background {
             commands.push(PaintCommand::Rect {
-                x: layout_box.rect.x,
-                y: layout_box.rect.y,
-                width: layout_box.rect.width,
-                height: layout_box.rect.height,
+                x: content_rect.x,
+                y: content_rect.y,
+                width: content_rect.width,
+                height: content_rect.height,
                 color,
             });
         }

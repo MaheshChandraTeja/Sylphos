@@ -1,0 +1,49 @@
+// Module 42 additions for crates/present/src/lib.rs:
+//
+// pub mod text;
+//
+// pub use text::{
+//     layout_text,
+//     measure_text,
+//     parse_font_style,
+//     parse_font_weight,
+//     parse_text_align,
+//     parse_text_overflow,
+//     parse_text_transform,
+//     parse_white_space,
+//     positioned_glyphs,
+//     shape_text,
+//     BreakOpportunity,
+//     FontDatabase,
+//     FontDescriptor,
+//     FontFace,
+//     FontFaceId,
+//     FontMetrics,
+//     FontRequest,
+//     FontStretch,
+//     FontStyle,
+//     FontWeight,
+//     GlyphAtlasKey,
+//     GlyphAtlasRequest,
+//     GlyphCluster,
+//     GlyphId,
+//     GlyphRun,
+//     IntrinsicSize as TextIntrinsicSize,
+//     PositionedGlyph,
+//     ScriptClass,
+//     ShapedText,
+//     TextAlign,
+//     TextDirection,
+//     TextEngine,
+//     TextLayout,
+//     TextLine,
+//     TextMeasure,
+//     TextMetrics,
+//     TextOverflow,
+//     TextStyle,
+//     TextTransform,
+//     WhiteSpace,
+// };
+//
+// #[cfg(test)]
+// mod text_tests;

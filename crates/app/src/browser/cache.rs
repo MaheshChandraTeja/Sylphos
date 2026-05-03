@@ -4,7 +4,7 @@
     clippy::too_many_lines
 )]
 
-//! Persistent resource cache for Sylphos page and image fetches.
+//! Persistent resource cache for Sylphos browser resources.
 //!
 //! The cache intentionally stores decoded HTTP response bodies rather than raw
 //! transfer bytes. The `fetch` crate already handles redirects and compression,
@@ -26,10 +26,12 @@ use url::Url;
 
 const DEFAULT_HTML_TTL_SECS: u64 = 5 * 60;
 const DEFAULT_IMAGE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const DEFAULT_STYLESHEET_TTL_SECS: u64 = 24 * 60 * 60;
+const DEFAULT_FONT_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+const DEFAULT_SCRIPT_TTL_SECS: u64 = 60 * 60;
 const DEFAULT_MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_MAX_DISK_ENTRY_BYTES: usize = 32 * 1024 * 1024;
 const TEMP_FILE_SUFFIX: &str = ".tmp";
-const CACHE_METADATA_VERSION: u32 = 2;
 
 /// Cache category used for different resource lifetimes and folders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,8 +39,17 @@ pub(crate) enum CacheBucket {
     /// Main document HTML/text resources.
     Html,
 
+    /// External CSS stylesheets.
+    Stylesheet,
+
     /// Image resources fetched from `<img>` tags.
     Image,
+
+    /// Font resources.
+    Font,
+
+    /// JavaScript resources.
+    Script,
 }
 
 impl CacheBucket {
@@ -46,7 +57,10 @@ impl CacheBucket {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Html => "html",
+            Self::Stylesheet => "stylesheets",
             Self::Image => "images",
+            Self::Font => "fonts",
+            Self::Script => "scripts",
         }
     }
 }
@@ -88,8 +102,17 @@ pub(crate) struct CachePolicy {
     /// Time-to-live for HTML documents.
     pub html_ttl: Duration,
 
+    /// Time-to-live for external stylesheets.
+    pub stylesheet_ttl: Duration,
+
     /// Time-to-live for image bytes.
     pub image_ttl: Duration,
+
+    /// Time-to-live for font bytes.
+    pub font_ttl: Duration,
+
+    /// Time-to-live for JavaScript resources.
+    pub script_ttl: Duration,
 
     /// Maximum bytes kept in the in-memory cache.
     pub memory_limit_bytes: usize,
@@ -103,7 +126,10 @@ impl Default for CachePolicy {
         Self {
             enabled: true,
             html_ttl: Duration::from_secs(DEFAULT_HTML_TTL_SECS),
+            stylesheet_ttl: Duration::from_secs(DEFAULT_STYLESHEET_TTL_SECS),
             image_ttl: Duration::from_secs(DEFAULT_IMAGE_TTL_SECS),
+            font_ttl: Duration::from_secs(DEFAULT_FONT_TTL_SECS),
+            script_ttl: Duration::from_secs(DEFAULT_SCRIPT_TTL_SECS),
             memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
             max_disk_entry_bytes: DEFAULT_MAX_DISK_ENTRY_BYTES,
         }
@@ -124,7 +150,10 @@ impl CachePolicy {
     fn ttl_for(&self, bucket: CacheBucket) -> Duration {
         match bucket {
             CacheBucket::Html => self.html_ttl,
+            CacheBucket::Stylesheet => self.stylesheet_ttl,
             CacheBucket::Image => self.image_ttl,
+            CacheBucket::Font => self.font_ttl,
+            CacheBucket::Script => self.script_ttl,
         }
     }
 }
@@ -258,7 +287,18 @@ impl CacheStore {
     }
 
     /// Returns cached document text or fetches it from network.
+    #[allow(dead_code)]
     pub(crate) async fn get_or_fetch_text(&self, url: &str) -> Result<CachedText> {
+        self.get_or_fetch_text_in_bucket(CacheBucket::Html, url)
+            .await
+    }
+
+    /// Returns cached text in a caller-selected text bucket or fetches it from network.
+    pub(crate) async fn get_or_fetch_text_in_bucket(
+        &self,
+        bucket: CacheBucket,
+        url: &str,
+    ) -> Result<CachedText> {
         ensure_fetchable_url(url)?;
 
         if !self.inner.policy.enabled {
@@ -272,10 +312,10 @@ impl CacheStore {
             });
         }
 
-        if let Some(bytes) = self.read(CacheBucket::Html, url) {
+        if let Some(bytes) = self.read(bucket, url) {
             let source = bytes.1;
             let text = String::from_utf8(bytes.0)
-                .with_context(|| format!("cached document for `{url}` was not valid UTF-8"))?;
+                .with_context(|| format!("cached text resource for `{url}` was not valid UTF-8"))?;
             let byte_len = text.len();
             return Ok(CachedText {
                 url: url.to_owned(),
@@ -287,7 +327,7 @@ impl CacheStore {
 
         let text = fetch_text_from_network(url).await?;
         let bytes = text.as_bytes().to_vec();
-        self.write(CacheBucket::Html, url, &bytes);
+        self.write(bucket, url, &bytes);
 
         Ok(CachedText {
             url: url.to_owned(),
@@ -298,8 +338,20 @@ impl CacheStore {
     }
 
     /// Returns cached bytes or fetches them from network with a hard byte cap.
+    #[allow(dead_code)]
     pub(crate) async fn get_or_fetch_bytes(
         &self,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<CachedBytes> {
+        self.get_or_fetch_bytes_in_bucket(CacheBucket::Image, url, max_bytes)
+            .await
+    }
+
+    /// Returns cached bytes in a caller-selected bucket or fetches them from network.
+    pub(crate) async fn get_or_fetch_bytes_in_bucket(
+        &self,
+        bucket: CacheBucket,
         url: &str,
         max_bytes: usize,
     ) -> Result<CachedBytes> {
@@ -314,7 +366,7 @@ impl CacheStore {
             });
         }
 
-        if let Some((bytes, source)) = self.read(CacheBucket::Image, url) {
+        if let Some((bytes, source)) = self.read(bucket, url) {
             if bytes.len() <= max_bytes {
                 return Ok(CachedBytes {
                     url: url.to_owned(),
@@ -323,11 +375,11 @@ impl CacheStore {
                 });
             }
 
-            warn!(url = %url, bytes = bytes.len(), max_bytes, "cached resource exceeded caller limit; refetching");
+            warn!(url = %url, bytes = bytes.len(), max_bytes, bucket = bucket.as_str(), "cached resource exceeded caller limit; refetching");
         }
 
         let bytes = fetch_bytes_from_network(url, max_bytes).await?;
-        self.write(CacheBucket::Image, url, &bytes);
+        self.write(bucket, url, &bytes);
 
         Ok(CachedBytes {
             url: url.to_owned(),
@@ -421,10 +473,7 @@ impl CacheStore {
             format!("failed to parse cache metadata `{}`", paths.meta.display())
         })?;
 
-        if metadata.version != CACHE_METADATA_VERSION
-            || metadata.url != url
-            || metadata.bucket != bucket.as_str()
-        {
+        if metadata.version != 1 || metadata.url != url || metadata.bucket != bucket.as_str() {
             return Ok(None);
         }
 
@@ -463,7 +512,7 @@ impl CacheStore {
         }
 
         let metadata = CacheMetadata {
-            version: CACHE_METADATA_VERSION,
+            version: 1,
             url: url.to_owned(),
             bucket: bucket.as_str().to_owned(),
             fetched_at_ms,
@@ -609,12 +658,12 @@ fn default_cache_root() -> PathBuf {
     if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
         return PathBuf::from(local_app_data)
             .join("Kairais")
-            .join("Sylphos")
+            .join("Syphos")
             .join("cache");
     }
 
     if let Some(xdg_cache_home) = env::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(xdg_cache_home).join("sylphos");
+        return PathBuf::from(xdg_cache_home).join("syphos");
     }
 
     if let Some(home) = env::var_os("HOME") {
@@ -625,13 +674,13 @@ fn default_cache_root() -> PathBuf {
                 .join("Library")
                 .join("Caches")
                 .join("Kairais")
-                .join("Sylphos");
+                .join("Syphos");
         }
 
-        return home_path.join(".cache").join("sylphos");
+        return home_path.join(".cache").join("syphos");
     }
 
-    PathBuf::from(".sylphos-cache")
+    PathBuf::from(".syphos-cache")
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {

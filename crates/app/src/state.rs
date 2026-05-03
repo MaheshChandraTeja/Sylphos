@@ -12,7 +12,7 @@ use crate::{
         SharedPaintState,
     },
 };
-use present::{Color, PaintCommand, PaintPlan};
+use present::{Color, IncrementalReflowEngine, PaintCommand, PaintPlan, ReflowRequest};
 
 const INITIAL_VERTEX_BUFFER_BYTES: wgpu::BufferAddress = 4096;
 const EMPTY_PAGE_BACKGROUND: Color = Color::rgba(0.95, 0.95, 0.94, 1.0);
@@ -32,6 +32,10 @@ pub struct State {
     media_bind_group_layout: wgpu::BindGroupLayout,
     media_bind_group: wgpu::BindGroup,
     last_paint_revision: u64,
+    last_document_revision: u64,
+    last_image_revision: u64,
+    last_chrome_revision: u64,
+    page_reflow: IncrementalReflowEngine,
     mesh_dirty: bool,
 }
 
@@ -79,7 +83,7 @@ impl State {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: Some("Sylphos GPU Device"),
+                    label: Some("Syphos GPU Device"),
                     required_features,
                     required_limits,
                 },
@@ -133,7 +137,7 @@ impl State {
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sylphos_paint_pipeline_layout"),
+            label: Some("syphos_paint_pipeline_layout"),
             bind_group_layouts: &[&media_bind_group_layout],
             push_constant_ranges: &[],
         });
@@ -141,7 +145,7 @@ impl State {
         let vertex_layout = vertex_buffer_layout();
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sylphos_paint_pipeline"),
+            label: Some("syphos_paint_pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -171,7 +175,7 @@ impl State {
         let vertex_buffer = create_vertex_buffer(
             &device,
             INITIAL_VERTEX_BUFFER_BYTES,
-            "sylphos_initial_vertex_buffer",
+            "syphos_initial_vertex_buffer",
         );
 
         Ok(Self {
@@ -188,6 +192,10 @@ impl State {
             media_bind_group_layout,
             media_bind_group,
             last_paint_revision: 0,
+            last_document_revision: 0,
+            last_image_revision: 0,
+            last_chrome_revision: 0,
+            page_reflow: IncrementalReflowEngine::new(),
             mesh_dirty: true,
         })
     }
@@ -215,7 +223,7 @@ impl State {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("sylphos_encoder"),
+                label: Some("syphos_encoder"),
             });
 
         let rgba = self
@@ -232,7 +240,7 @@ impl State {
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sylphos_render_pass"),
+                label: Some("syphos_render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -269,14 +277,20 @@ impl State {
             return;
         }
 
+        let force_page_reflow =
+            self.mesh_dirty || snapshot.document_revision != self.last_document_revision;
+
         self.last_paint_revision = snapshot.revision;
+        self.last_document_revision = snapshot.document_revision;
+        self.last_image_revision = snapshot.image_revision;
+        self.last_chrome_revision = snapshot.chrome_revision;
         self.mesh_dirty = false;
 
-        let paint_plan = build_viewport_paint_plan(
+        let (paint_plan, reflow_summary) = self.build_viewport_paint_plan_incremental(
             snapshot.document.as_ref(),
             &snapshot.chrome,
-            self.config.width as f32,
-            self.config.height as f32,
+            snapshot.invalidation.as_ref(),
+            force_page_reflow,
         );
 
         if let Ok(mut guard) = self.clear_rgba.lock() {
@@ -293,7 +307,8 @@ impl State {
         debug!(
             font = %draw_mesh.font_atlas.font_name,
             images = snapshot.images.len(),
-            "rebuilt media atlases"
+            reflow = %reflow_summary,
+            "rebuilt paint mesh"
         );
 
         self.media_bind_group = create_media_bind_group(
@@ -323,7 +338,7 @@ impl State {
             self.vertex_buffer = create_vertex_buffer(
                 &self.device,
                 self.vertex_buffer_capacity,
-                "sylphos_resized_vertex_buffer",
+                "syphos_resized_vertex_buffer",
             );
         }
 
@@ -334,8 +349,65 @@ impl State {
             Err(_) => u32::MAX,
         };
     }
+
+    fn build_viewport_paint_plan_incremental(
+        &mut self,
+        document: Option<&present::RenderDocument>,
+        chrome: &ChromeSnapshot,
+        invalidation: Option<&present::InvalidationSet>,
+        force_page_reflow: bool,
+    ) -> (PaintPlan, String) {
+        let width = self.config.width as f32;
+        let height = self.config.height as f32;
+        let toolbar_height = TOOLBAR_HEIGHT.min(height.max(1.0));
+        let page_height = (height - toolbar_height).max(1.0);
+
+        let (page_plan, summary) = match document {
+            None => {
+                self.page_reflow.reset();
+                (
+                    build_empty_page_plan(width, page_height),
+                    "empty-page full".to_owned(),
+                )
+            }
+            Some(document) => {
+                let output = self.page_reflow.update(ReflowRequest {
+                    document,
+                    width,
+                    height: page_height,
+                    invalidation,
+                    force_full: force_page_reflow,
+                });
+                let dirty_count = output.dirty_regions.regions().len();
+                let summary = format!(
+                    "mode={:?} reason={:?} dirty_regions={} full={} commands={}->{}",
+                    output.mode,
+                    output.reason,
+                    dirty_count,
+                    output.dirty_regions.is_full_repaint(),
+                    output.previous_command_count,
+                    output.current_command_count
+                );
+                (output.paint_plan, summary)
+            }
+        };
+
+        let page_background = page_plan.background;
+        let mut commands = translate_page_commands(page_plan.commands, toolbar_height);
+        let chrome_plan = build_chrome_paint_plan(chrome, width);
+        commands.extend(chrome_plan.commands);
+
+        (
+            PaintPlan {
+                background: page_background,
+                commands,
+            },
+            summary,
+        )
+    }
 }
 
+#[allow(dead_code)]
 fn build_viewport_paint_plan(
     document: Option<&present::RenderDocument>,
     chrome: &ChromeSnapshot,
@@ -375,7 +447,7 @@ fn build_empty_page_plan(width: f32, height: f32) -> PaintPlan {
             PaintCommand::TextPlaceholder {
                 x: 32.0,
                 y: 32.0,
-                text: "Sylphos is ready. Enter a URL above.".to_owned(),
+                text: "Syphos is ready. Enter a URL above.".to_owned(),
                 size: 18.0,
                 color: EMPTY_PAGE_TEXT,
             },
@@ -436,7 +508,7 @@ fn translate_page_commands(commands: Vec<PaintCommand>, y_offset: f32) -> Vec<Pa
 
 fn create_media_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("sylphos_media_bind_group_layout"),
+        label: Some("syphos_media_bind_group_layout"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -483,7 +555,7 @@ fn create_media_bind_group(
     let font_texture = create_r8_texture(
         device,
         queue,
-        "sylphos_font_atlas_texture",
+        "syphos_font_atlas_texture",
         draw_mesh.font_atlas.width.max(1),
         draw_mesh.font_atlas.height.max(1),
         &draw_mesh.font_atlas.pixels,
@@ -491,7 +563,7 @@ fn create_media_bind_group(
     let image_texture = create_rgba_texture(
         device,
         queue,
-        "sylphos_image_atlas_texture",
+        "syphos_image_atlas_texture",
         draw_mesh.image_atlas.width.max(1),
         draw_mesh.image_atlas.height.max(1),
         &draw_mesh.image_atlas.pixels,
@@ -501,7 +573,7 @@ fn create_media_bind_group(
     let image_view = image_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("sylphos_media_sampler"),
+        label: Some("syphos_media_sampler"),
         address_mode_u: wgpu::AddressMode::ClampToEdge,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
         address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -512,7 +584,7 @@ fn create_media_bind_group(
     });
 
     device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("sylphos_media_bind_group"),
+        label: Some("syphos_media_bind_group"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {

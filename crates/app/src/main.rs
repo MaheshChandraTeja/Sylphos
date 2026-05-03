@@ -17,13 +17,19 @@ use winit::{
 };
 
 mod browser;
+mod js;
 mod render;
 mod state;
 
 use browser::{
-    fetch_decode_images, normalize_user_url, resolve_document_image_sources, resolve_link_url,
-    BrowserChrome, BrowserHistory, CachePolicy, CacheSource, CacheStore, ChromeAction,
-    NavigationTarget, TabId, TabManager, TOOLBAR_HEIGHT,
+    fetch_decode_images_with_scheduler, load_and_apply_stylesheets_with_scheduler,
+    normalize_user_url, resolve_document_image_sources, resolve_link_url, BrowserChrome,
+    BrowserHistory, CachePolicy, CacheSource, CacheStore, ChromeAction, NavigationTarget,
+    PageDomController, PageFormAction, PageFormController, ResourceRequest, ResourceScheduler,
+    ResourceSummary, StylesheetLoadSummary, TabId, TabManager, TOOLBAR_HEIGHT,
+};
+use js::{
+    execute_document_scripts, MediaCanvasWorkerHost, ScriptExecutionSummary, WebPlatformHost,
 };
 use render::{DecodedImageStore, SharedPaintState};
 
@@ -69,10 +75,12 @@ struct App {
     tabs: TabManager,
     history: BrowserHistory,
     chrome: BrowserChrome,
+    page_forms: PageFormController,
+    page_dom: PageDomController,
     pipeline_tx: mpsc::Sender<PipelineMessage>,
     pipeline_rx: mpsc::Receiver<PipelineMessage>,
     active_navigation_id: u64,
-    cache: CacheStore,
+    resources: ResourceScheduler,
     modifiers: ModifiersState,
     cursor_x: f32,
     cursor_y: f32,
@@ -86,7 +94,7 @@ impl ApplicationHandler for App {
         }
 
         let mut window_attributes =
-            Window::default_attributes().with_title("Sylphos — History + Tabs");
+            Window::default_attributes().with_title("Sylphos — DOM Bindings + Event Loop");
 
         if let Some(icon) = load_window_icon() {
             window_attributes = window_attributes.with_window_icon(Some(icon));
@@ -176,7 +184,7 @@ impl ApplicationHandler for App {
                 let chrome_consumed = action != ChromeAction::None;
                 self.execute_chrome_action(action);
 
-                if !chrome_consumed {
+                if !chrome_consumed && !self.execute_page_form_click(&window) {
                     self.execute_page_click(&window);
                 }
 
@@ -185,6 +193,12 @@ impl ApplicationHandler for App {
                 self.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                if self.execute_page_form_key(&event.logical_key) {
+                    self.sync_browser_to_renderer();
+                    self.request_redraw();
+                    return;
+                }
+
                 let action = self.chrome.handle_key(&event.logical_key, self.modifiers);
                 self.execute_chrome_action(action);
                 self.sync_browser_to_renderer();
@@ -233,6 +247,8 @@ impl App {
     }
 
     fn navigate_from_input(&mut self, input: &str) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         match normalize_user_url(input) {
             Ok(url) => {
                 let target = self.tabs.navigate_active_to(url);
@@ -246,23 +262,31 @@ impl App {
     }
 
     fn reload_current(&mut self) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         let target = self.tabs.reload_active();
         self.begin_navigation(target);
     }
 
     fn go_back(&mut self) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         if let Some(target) = self.tabs.go_back_active() {
             self.begin_navigation(target);
         }
     }
 
     fn go_forward(&mut self) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         if let Some(target) = self.tabs.go_forward_active() {
             self.begin_navigation(target);
         }
     }
 
     fn new_tab(&mut self) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         let tab_id = self.tabs.new_blank_tab();
         info!(tab_id = tab_id.value(), "created new tab");
         self.apply_active_tab_to_paint_state();
@@ -271,6 +295,8 @@ impl App {
     }
 
     fn close_tab(&mut self, tab_id: TabId) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         if self.tabs.close_tab(tab_id) {
             info!(tab_id = tab_id.value(), "closed tab");
             self.apply_active_tab_to_paint_state();
@@ -280,6 +306,8 @@ impl App {
     }
 
     fn switch_tab(&mut self, tab_id: TabId) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         if self.tabs.switch_to(tab_id) {
             info!(tab_id = tab_id.value(), url = %self.tabs.current_url(), "switched tab");
             self.apply_active_tab_to_paint_state();
@@ -289,6 +317,8 @@ impl App {
     }
 
     fn next_tab(&mut self) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         if self.tabs.activate_next() {
             self.apply_active_tab_to_paint_state();
             self.chrome.set_loaded(self.tabs.current_url());
@@ -297,6 +327,8 @@ impl App {
     }
 
     fn previous_tab(&mut self) {
+        self.page_forms.clear_focus();
+        self.page_dom.clear();
         if self.tabs.activate_previous() {
             self.apply_active_tab_to_paint_state();
             self.chrome.set_loaded(self.tabs.current_url());
@@ -310,6 +342,8 @@ impl App {
         let url = target.url;
         let tab_id = target.tab_id;
 
+        self.page_dom.clear();
+
         if url.eq_ignore_ascii_case("about:blank") {
             let _ = self.tabs.mark_loaded(
                 tab_id,
@@ -317,6 +351,7 @@ impl App {
                 present::RenderDocument::new(),
                 DecodedImageStore::default(),
             );
+            self.page_dom.clear();
             self.apply_active_tab_to_paint_state();
             self.chrome.set_loaded("about:blank");
             self.sync_browser_to_renderer();
@@ -331,14 +366,15 @@ impl App {
             self.clear_active_page_surface();
         }
 
-        let cache = self.cache.clone();
+        let resources = self.resources.clone();
+        resources.reset_summary();
         let tx = self.pipeline_tx.clone();
 
         info!(url = %url, navigation_id, tab_id = tab_id.value(), "starting navigation");
 
         drop(self.rt.spawn(async move {
             let started = Instant::now();
-            let result = load_url(&url, cache).await;
+            let result = load_url(&url, resources).await;
             let elapsed_ms = started.elapsed().as_millis();
 
             let message = match result {
@@ -391,6 +427,7 @@ impl App {
                     self.history.record_visit(&message.url, title.as_deref());
 
                     if message.tab_id == self.tabs.active_id() {
+                        self.page_forms.clear_focus();
                         self.apply_active_tab_to_paint_state();
                         self.chrome.set_loaded(&message.url);
                     }
@@ -400,6 +437,67 @@ impl App {
                         title = title.as_deref().unwrap_or(""),
                         bytes = page.bytes,
                         blocks = page.blocks,
+                        stylesheets_discovered = page.stylesheets.discovered,
+                        stylesheets_loaded = page.stylesheets.loaded,
+                        stylesheets_failed = page.stylesheets.failed,
+                        stylesheets_skipped = page.stylesheets.skipped,
+                        stylesheets_imported = page.stylesheets.imported,
+                        stylesheet_bytes = page.stylesheets.bytes,
+                        stylesheet_rules = page.stylesheets.rule_count,
+                        stylesheet_memory_hits = page.stylesheets.memory_hits,
+                        stylesheet_disk_hits = page.stylesheets.disk_hits,
+                        stylesheet_network_fetches = page.stylesheets.network_fetches,
+                        stylesheet_disabled_fetches = page.stylesheets.disabled_fetches,
+                        scripts_discovered = page.scripts.discovered,
+                        scripts_executable = page.scripts.executable,
+                        scripts_inline_executed = page.scripts.inline_executed,
+                        scripts_external_executed = page.scripts.external_executed,
+                        scripts_skipped = page.scripts.skipped,
+                        scripts_failed = page.scripts.failed,
+                        script_bytes = page.scripts.bytes,
+                        script_console_messages = page.scripts.console_messages,
+                        script_warnings = page.scripts.warnings,
+                        script_errors = page.scripts.errors,
+                        js_dom_mutations = page.scripts.dom_mutations,
+                        js_dom_ignored = page.scripts.dom_ignored,
+                        js_event_tasks = page.scripts.event_tasks_executed,
+                        js_microtasks = page.scripts.microtasks_executed,
+                        js_event_listeners = page.scripts.registered_listeners,
+                        js_dispatched_events = page.scripts.dispatched_events,
+                        script_memory_hits = page.scripts.memory_hits,
+                        script_disk_hits = page.scripts.disk_hits,
+                        script_network_fetches = page.scripts.network_fetches,
+                        script_disabled_fetches = page.scripts.disabled_fetches,
+                        web_api_effects = page.scripts.web_platform.effects,
+                        web_api_fetch_calls = page.scripts.web_platform.fetch_calls,
+                        web_api_xhr_calls = page.scripts.web_platform.xhr_calls,
+                        web_api_network_succeeded = page.scripts.web_platform.network_succeeded,
+                        web_api_network_failed = page.scripts.web_platform.network_failed,
+                        web_api_response_bytes = page.scripts.web_platform.response_bytes,
+                        web_storage_writes = page.scripts.web_platform.storage_writes,
+                        web_storage_removes = page.scripts.web_platform.storage_removes,
+                        web_cookie_writes = page.scripts.web_platform.cookie_writes,
+                        web_history_pushes = page.scripts.web_platform.history_pushes,
+                        web_history_replaces = page.scripts.web_platform.history_replaces,
+                        web_timers_scheduled = page.scripts.web_platform.timers_scheduled,
+                        web_timers_cleared = page.scripts.web_platform.timers_cleared,
+                        web_platform_summary = %page.scripts.web_platform.compact(),
+                        media_effects = page.scripts.media.effects,
+                        media_elements = page.scripts.media.media_elements,
+                        media_src_assignments = page.scripts.media.media_src_assignments,
+                        media_controls = page.scripts.media.media_controls,
+                        media_source_objects = page.scripts.media.media_source_objects,
+                        media_source_buffers = page.scripts.media.source_buffers,
+                        media_can_play_queries = page.scripts.media.can_play_type_queries,
+                        media_can_play_supported = page.scripts.media.can_play_type_supported,
+                        canvas_surfaces = page.scripts.media.canvas_surfaces,
+                        canvas_contexts = page.scripts.media.canvas_contexts,
+                        canvas_commands = page.scripts.media.canvas_commands,
+                        workers_created = page.scripts.media.workers_created,
+                        workers_loaded = page.scripts.media.workers_loaded,
+                        worker_bytes = page.scripts.media.worker_bytes,
+                        youtube_signals = page.scripts.media.youtube_signals,
+                        media_summary = %page.scripts.media.compact(),
                         images_discovered = page.images_discovered,
                         images_decoded = page.images_decoded,
                         images_failed = page.images_failed,
@@ -408,6 +506,14 @@ impl App {
                         image_network_fetches = page.image_network_fetches,
                         image_disabled_fetches = page.image_disabled_fetches,
                         page_cache_source = page.page_cache_source.as_str(),
+                        resources_total = page.resources.total,
+                        resources_succeeded = page.resources.succeeded,
+                        resources_failed = page.resources.failed,
+                        resources_bytes = page.resources.bytes,
+                        resource_network_fetches = page.resources.network_fetches,
+                        resource_memory_hits = page.resources.memory_hits,
+                        resource_disk_hits = page.resources.disk_hits,
+                        resource_summary = %page.resources.compact(),
                         elapsed_ms = page.elapsed_ms,
                         tab_id = message.tab_id.value(),
                         "navigation loaded"
@@ -438,10 +544,81 @@ impl App {
         }
     }
 
+    fn execute_page_form_click(&mut self, window: &Window) -> bool {
+        let Some(hit) = self.hit_test_page_form_control(window) else {
+            if self.page_forms.has_focus() {
+                if let Some(mut document) = self.tabs.active_document() {
+                    let _ = present::focus_form_control(&mut document, None);
+                    self.page_forms.clear_focus();
+                    self.commit_active_document(document);
+                }
+            }
+            return false;
+        };
+
+        let Some(mut document) = self.tabs.active_document() else {
+            return false;
+        };
+
+        self.page_dom.dispatch_form_control_click(&hit);
+
+        let current_url = self.tabs.current_url().to_owned();
+        let action = self
+            .page_forms
+            .handle_click(&mut document, &current_url, &hit);
+        self.page_dom.dispatch_form_document_mutation(&document);
+        self.commit_active_document(document);
+        self.execute_page_form_action(action);
+        true
+    }
+
+    fn execute_page_form_key(&mut self, key: &winit::keyboard::Key) -> bool {
+        if !self.page_forms.has_focus() {
+            return false;
+        }
+
+        let Some(mut document) = self.tabs.active_document() else {
+            self.page_forms.clear_focus();
+            return false;
+        };
+
+        let current_url = self.tabs.current_url().to_owned();
+        let action = self
+            .page_forms
+            .handle_key(&mut document, &current_url, key, self.modifiers);
+
+        if action == PageFormAction::None {
+            return false;
+        }
+
+        self.page_dom.dispatch_form_document_mutation(&document);
+        self.commit_active_document(document);
+        self.execute_page_form_action(action);
+        true
+    }
+
+    fn execute_page_form_action(&mut self, action: PageFormAction) {
+        match action {
+            PageFormAction::None | PageFormAction::Mutated => {}
+            PageFormAction::Submit(url) => {
+                info!(url = %url, "submitting GET form");
+                self.page_forms.clear_focus();
+                let target = self.tabs.navigate_active_to(url);
+                self.begin_navigation(target);
+            }
+            PageFormAction::Error(error) => {
+                warn!(error = %error, "form action failed");
+                self.chrome.set_error(error);
+            }
+        }
+    }
+
     fn execute_page_click(&mut self, window: &Window) {
         let Some(link) = self.hit_test_page_link(window) else {
             return;
         };
+
+        self.page_dom.dispatch_link_click(&link);
 
         match resolve_link_url(self.tabs.current_url(), &link.href) {
             Ok(url) => {
@@ -468,7 +645,15 @@ impl App {
             return;
         }
 
-        if let Some(link) = self.hit_test_page_link(window) {
+        if let Some(control) = self.hit_test_page_form_control(window) {
+            self.chrome.set_hovered_link(control.name.as_deref());
+            let cursor = if control.kind.is_text_editable() {
+                CursorIcon::Text
+            } else {
+                CursorIcon::Pointer
+            };
+            window.set_cursor(cursor);
+        } else if let Some(link) = self.hit_test_page_link(window) {
             self.chrome.set_hovered_link(Some(&link.href));
             window.set_cursor(CursorIcon::Pointer);
         } else {
@@ -493,6 +678,22 @@ impl App {
         present::hit_test_link(document, width, page_height, page_x, page_y)
     }
 
+    fn hit_test_page_form_control(&self, window: &Window) -> Option<present::FormControlHitResult> {
+        if self.cursor_y < TOOLBAR_HEIGHT {
+            return None;
+        }
+
+        let snapshot = self.paint_state.snapshot()?;
+        let document = snapshot.document.as_ref()?;
+        let size = window.inner_size();
+        let width = size.width as f32;
+        let page_height = ((size.height as f32) - TOOLBAR_HEIGHT).max(1.0);
+        let page_x = self.cursor_x;
+        let page_y = self.cursor_y - TOOLBAR_HEIGHT;
+
+        present::hit_test_form_control(document, width, page_height, page_x, page_y)
+    }
+
     fn clear_active_page_surface(&self) {
         if !self
             .paint_state
@@ -505,24 +706,51 @@ impl App {
         }
     }
 
-    fn apply_active_tab_to_paint_state(&self) {
+    fn apply_active_tab_to_paint_state(&mut self) {
         let content = self.tabs.active_content();
 
         if let Some(document) = content.document {
+            self.page_dom
+                .install_for_tab(self.tabs.active_id(), &document);
             if !self.paint_state.set_document(document) {
                 warn!(
                     "paint document state lock is poisoned; active tab document was not displayed"
                 );
             }
-        } else if !self
-            .paint_state
-            .set_document(present::RenderDocument::new())
-        {
-            warn!("paint document state lock is poisoned; blank tab was not displayed");
+        } else {
+            self.page_dom.clear();
+            if !self
+                .paint_state
+                .set_document(present::RenderDocument::new())
+            {
+                warn!("paint document state lock is poisoned; blank tab was not displayed");
+            }
         }
 
         if !self.paint_state.set_images(content.images) {
             warn!("paint image state lock is poisoned; active tab images were not displayed");
+        }
+    }
+
+    fn commit_active_document(&mut self, document: present::RenderDocument) {
+        self.page_dom.sync_from_document(&document);
+        let invalidation = self.page_dom.take_invalidation();
+
+        if !self.tabs.set_active_document(document.clone()) {
+            warn!("active tab document could not be updated");
+            return;
+        }
+
+        if !self
+            .paint_state
+            .set_document_with_invalidation(document, invalidation)
+        {
+            warn!("paint document state lock is poisoned; incremental document update was not displayed");
+        }
+
+        let content = self.tabs.active_content();
+        if !self.paint_state.set_images(content.images) {
+            warn!("paint image state lock is poisoned; active tab images were not refreshed");
         }
     }
 
@@ -555,6 +783,7 @@ fn main() -> Result<()> {
     info!(url = %initial_url, "starting Sylphos");
 
     let cache = create_cache_store(&cli)?;
+    let resources = ResourceScheduler::new(cache.clone());
     let history_path = cache.root().join("history").join("history.json");
     let history = BrowserHistory::load(history_path);
 
@@ -588,10 +817,12 @@ fn main() -> Result<()> {
         tabs,
         history,
         chrome,
+        page_forms: PageFormController::default(),
+        page_dom: PageDomController::default(),
         pipeline_tx,
         pipeline_rx,
         active_navigation_id: 0,
-        cache,
+        resources,
         modifiers: ModifiersState::default(),
         cursor_x: 0.0,
         cursor_y: 0.0,
@@ -607,6 +838,8 @@ struct LoadedPage {
     title: Option<String>,
     bytes: usize,
     blocks: usize,
+    stylesheets: StylesheetLoadSummary,
+    scripts: ScriptExecutionSummary,
     images_discovered: usize,
     images_decoded: usize,
     images_failed: usize,
@@ -615,6 +848,7 @@ struct LoadedPage {
     image_network_fetches: usize,
     image_disabled_fetches: usize,
     page_cache_source: CacheSource,
+    resources: ResourceSummary,
     elapsed_ms: u128,
     document: present::RenderDocument,
     images: DecodedImageStore,
@@ -627,37 +861,72 @@ impl LoadedPage {
     }
 }
 
-async fn load_url(url: &str, cache: CacheStore) -> Result<LoadedPage> {
-    let cached_page = cache.get_or_fetch_text(url).await?;
-    let page_cache_source = cached_page.source;
-    let page_url = cached_page.url;
-    let bytes = cached_page.bytes;
-    let text = cached_page.text;
+async fn load_url(url: &str, resources: ResourceScheduler) -> Result<LoadedPage> {
+    let page_resource = resources
+        .fetch_text(ResourceRequest::document(url.to_owned()))
+        .await?;
+    let page_cache_source = page_resource.source;
+    let page_url = page_resource.url;
+    let bytes = page_resource.bytes;
+    let text = page_resource.text;
 
     info!(
         url = %page_url,
         bytes,
         cache_source = page_cache_source.as_str(),
-        "loaded response body"
+        fetch_ms = page_resource.timing.fetch.as_millis(),
+        "loaded response body through resource scheduler"
     );
 
     let document = html_mvp::parse(&text)?;
     let mut render_document = present::extract_render_document(&document);
+    let stylesheet_summary =
+        load_and_apply_stylesheets_with_scheduler(url, &mut render_document, &resources).await;
+
+    let mut web_platform =
+        WebPlatformHost::new(resources.cache().root().join("web-platform"), &page_url);
+    let mut media_host =
+        MediaCanvasWorkerHost::new(resources.cache().root().join("media-platform"), &page_url);
+    let script_summary = execute_document_scripts(
+        &document,
+        &mut render_document,
+        &resources,
+        &page_url,
+        None,
+        &mut web_platform,
+        &mut media_host,
+    )
+    .await;
+
+    for requested_url in &script_summary.navigation_requests {
+        warn!(
+            url = %requested_url,
+            "script requested navigation; DOM/browser event loop captured navigation effect for future policy handling"
+        );
+    }
+
     resolve_document_image_sources(url, &mut render_document);
     let title = render_document.title.clone();
     let blocks = render_document.blocks.len();
 
-    let image_summary = fetch_decode_images(url, &render_document, &cache).await;
+    let image_summary = fetch_decode_images_with_scheduler(url, &render_document, &resources).await;
+    let resource_summary = resources.summary();
 
     let normalized = html_mvp::serialize_document(&document);
     let preview: String = normalized.chars().take(512).collect();
 
-    info!(preview = %preview, "normalized html preview");
+    info!(
+        preview = %preview,
+        resources = %resource_summary.compact(),
+        "normalized html preview"
+    );
 
     Ok(LoadedPage {
         title,
         bytes,
         blocks,
+        stylesheets: stylesheet_summary,
+        scripts: script_summary,
         images_discovered: image_summary.discovered,
         images_decoded: image_summary.decoded,
         images_failed: image_summary.failed,
@@ -666,6 +935,7 @@ async fn load_url(url: &str, cache: CacheStore) -> Result<LoadedPage> {
         image_network_fetches: image_summary.network_fetches,
         image_disabled_fetches: image_summary.disabled_fetches,
         page_cache_source,
+        resources: resource_summary,
         elapsed_ms: 0,
         document: render_document,
         images: image_summary.store,

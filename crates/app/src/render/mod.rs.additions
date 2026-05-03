@@ -1,0 +1,13 @@
+// Add this line to crates/app/src/render/mod.rs:
+//
+// pub(crate) mod text_measure_bridge;
+//
+// Optional re-export:
+//
+// pub(crate) use text_measure_bridge::{
+//     app_layout_text,
+//     app_measure_text,
+//     app_positioned_glyphs,
+//     app_shape_text,
+//     AppTextRuntime,
+// };

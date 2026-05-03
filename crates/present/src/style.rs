@@ -1,5 +1,6 @@
 #![doc = "CSS-lite style-sheet and computed paint-style types."]
 
+use crate::box_model::{BoxModelStylesLite, ComputedBoxModelStyles};
 use crate::Color;
 
 const DEFAULT_DARK_BACKGROUND: Color = Color::rgba(0.10, 0.10, 0.15, 1.0);
@@ -44,6 +45,9 @@ pub struct StyleSheetLite {
 
     /// Whether horizontal auto-centering was requested with values like `margin: 15vh auto`.
     pub center_horizontally: bool,
+
+    /// CSS box-model values for supported tag selectors.
+    pub box_model: BoxModelStylesLite,
 }
 
 impl StyleSheetLite {
@@ -61,11 +65,12 @@ impl StyleSheetLite {
             && self.margin_left_px.is_none()
             && self.margin_top_px.is_none()
             && !self.center_horizontally
+            && self.box_model.is_empty()
     }
 
     /// Merges another style sheet into this one.
     ///
-    /// Later CSS rules should win, so `Some` values in `other` replace existing values.
+    /// Later CSS rules win, so `Some` values in `other` replace existing values.
     pub fn merge_from(&mut self, other: Self) {
         if other.body_background.is_some() {
             self.body_background = other.body_background;
@@ -103,6 +108,8 @@ impl StyleSheetLite {
                 *target = source;
             }
         }
+
+        self.box_model.merge_from(other.box_model);
     }
 
     /// Computes concrete paint-time style values for a viewport.
@@ -115,6 +122,7 @@ impl StyleSheetLite {
     ) -> ComputedPaintStyle {
         let background = self
             .body_background
+            .or(self.box_model.body.background)
             .or(theme_color)
             .unwrap_or(DEFAULT_DARK_BACKGROUND);
 
@@ -141,6 +149,10 @@ impl StyleSheetLite {
         ];
 
         let paragraph_size = self.paragraph_size.unwrap_or(body_size).max(8.0);
+        let computed_box_model = self.box_model.compute(text_color);
+        let body_padding = computed_box_model.body.padding;
+        let body_border = computed_box_model.body.border_width;
+
         let content_width = self.content_width_fraction.map_or_else(
             || (viewport_width - 64.0).max(240.0),
             |fraction| viewport_width * fraction.clamp(0.05, 1.0),
@@ -153,13 +165,20 @@ impl StyleSheetLite {
                     .map(|fraction| viewport_height * fraction)
             })
             .unwrap_or(32.0)
-            .max(0.0);
+            .max(0.0)
+            + computed_box_model.body.margin.top
+            + body_border.top
+            + body_padding.top;
 
         let margin_left = if self.center_horizontally {
             ((viewport_width - content_width) / 2.0).max(24.0)
         } else {
-            self.margin_left_px.unwrap_or(32.0).max(0.0)
-        };
+            self.margin_left_px.unwrap_or(32.0).max(0.0) + computed_box_model.body.margin.left
+        } + body_border.left
+            + body_padding.left;
+
+        let content_width =
+            (content_width - body_padding.horizontal() - body_border.horizontal()).max(80.0);
 
         ComputedPaintStyle {
             background,
@@ -170,8 +189,9 @@ impl StyleSheetLite {
             generic_size: (paragraph_size * 0.90).max(8.0),
             content_x: margin_left,
             content_y: margin_top,
-            content_width: content_width.max(80.0),
+            content_width,
             line_gap: (paragraph_size * 0.75).max(12.0),
+            box_model: computed_box_model,
         }
     }
 }
@@ -208,4 +228,7 @@ pub struct ComputedPaintStyle {
 
     /// Vertical gap between blocks.
     pub line_gap: f32,
+
+    /// Computed box-model styles for supported selectors.
+    pub box_model: ComputedBoxModelStyles,
 }

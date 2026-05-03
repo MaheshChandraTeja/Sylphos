@@ -1,0 +1,55 @@
+// Module 38 worker.rs integration notes:
+//
+// 1. Add imports near the top of worker.rs:
+//
+// use crate::{
+//     install_transfer_globals,
+//     install_web_api_globals,
+//     array_buffer_id_from_value,
+//     transfer_list_from_value,
+//     create_array_buffer_object,
+//     ResearchTransferHost,
+//     ResearchWebApiHost,
+//     SharedTransferHost,
+//     SharedWebApiHost,
+// };
+//
+// 2. Extend WorkerMetrics:
+//
+// pub worker_fetch_calls: u64,
+// pub worker_storage_writes: u64,
+// pub transfer_buffers_created: u64,
+// pub transfer_buffers_transferred: u64,
+// pub transfer_buffers_detached: u64,
+// pub transfer_bytes_allocated: u64,
+//
+// 3. Extend WorkerScopeState with:
+// web_api: SharedWebApiHost,
+// transfer: SharedTransferHost,
+//
+// 4. In WorkerScopeState::new, create:
+// web_api: Rc::new(ResearchWebApiHost::new(script_url.clone())),
+// transfer: Rc::new(ResearchTransferHost::default()),
+//
+// 5. In install_worker_scope_globals(...), after existing worker globals:
+//
+// install_web_api_globals(vm, event_loop.clone(), scope.web_api.clone());
+// install_transfer_globals(vm, scope.transfer.clone());
+//
+// Then restore WorkerGlobalScope-specific postMessage/importScripts if needed:
+//
+// vm.define_global("postMessage", scope_post_message(scope.clone()));
+// vm.define_global("importScripts", scope_import_scripts(scope.clone()));
+//
+// 6. In main-thread Worker.postMessage native handler, support transfer list:
+//
+// const JS shape:
+// worker.postMessage(value, [arrayBuffer])
+//
+// Rust side:
+// let transfer_list = transfer_list_from_value(args.get(1));
+// let message = host.prepare_main_to_worker_message(worker, message, &transfer_list);
+//
+// 7. The included full `transfer.rs` is self-contained and safe to apply first.
+// If you prefer not to edit worker.rs yet, Module 38 APIs are available in normal VM scope;
+// worker integration can be completed by applying the notes above.
