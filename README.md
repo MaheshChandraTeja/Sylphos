@@ -655,19 +655,6 @@ Organization:
 
 ---
 
-## License
-
-The workspace manifests currently use:
-
-```text
-MIT OR Apache-2.0
-```
-
-If project-level licensing text changes later, this section should be updated
-with the actual published license files.
-
----
-
 ## Closing Note
 
 Sylphos is a browser-engine lab for people who want to see the machinery.
