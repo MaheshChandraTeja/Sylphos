@@ -1,11 +1,6 @@
 //! JavaScript runtime core, DOM bindings, browser event loop, Web Platform APIs,
-//! CSSOM hooks, media/canvas/worker compatibility, script discovery, loading,
-//! and diagnostics.
-//!
-//! Module 27 extends the bounded intrinsic runtime surface with media element,
-//! canvas, worker, MediaSource, and YouTube boot-signal host hooks. It is still
-//! not a full V8 runtime, but it gives the browser engine stable service
-//! boundaries for the platform APIs YouTube-class applications expect.
+//! CSSOM hooks, media/canvas/worker compatibility, service worker/cache API,
+//! security policy capture, script discovery, loading, and diagnostics.
 
 mod console;
 mod cookies;
@@ -16,6 +11,8 @@ mod history_api;
 mod media;
 mod runtime;
 mod scripts;
+mod security_policy;
+mod service_worker;
 mod storage;
 pub(crate) mod syljs_invalidation_bridge;
 pub(crate) mod syljs_script_pipeline_bridge;
@@ -35,6 +32,9 @@ pub(crate) use media::{
 };
 pub(crate) use runtime::{JavaScriptRuntime, ScriptExecution, ScriptProgram};
 pub(crate) use scripts::{execute_document_scripts, ScriptExecutionSummary};
+pub(crate) use service_worker::{
+    capture_service_worker_effects, ServiceWorkerHost, ServiceWorkerSummary,
+};
 pub(crate) use storage::{StorageAreaKind, WebStorage};
 pub(crate) use web_platform::{
     capture_web_platform_effects, WebApiEffect, WebPlatformHost, WebPlatformSummary,

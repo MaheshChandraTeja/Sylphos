@@ -1,9 +1,9 @@
+#![allow(dead_code, clippy::derivable_impls)]
+
 //! App bridge for Module 42 text measurement.
 //!
 //! The renderer should use this instead of guessing text width with vibes and
 //! regret. Guessing was cute for ten modules. Now it is how layouts get cursed.
-
-#![allow(dead_code)]
 
 use present::text::{
     layout_text, measure_text, positioned_glyphs, shape_text, FontDatabase, GlyphAtlasRequest,
@@ -11,9 +11,17 @@ use present::text::{
 };
 
 /// App-owned text runtime.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct AppTextRuntime {
     engine: TextEngine,
+}
+
+impl Default for AppTextRuntime {
+    fn default() -> Self {
+        Self {
+            engine: TextEngine::default(),
+        }
+    }
 }
 
 impl AppTextRuntime {

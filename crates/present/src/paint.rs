@@ -1,7 +1,7 @@
 #![doc = "Deterministic paint plan generation from viewport layout."]
 
 use crate::box_model::EdgeSizes;
-use crate::{layout_document, Color, LayoutBoxKind, LayoutTree, RenderDocument};
+use crate::{layout_document, Color, LayoutBoxKind, LayoutTree, RenderDocument, SvgPaintPlan};
 
 /// Deterministic paint plan for the renderer.
 ///
@@ -78,6 +78,56 @@ pub enum PaintCommand {
         /// Placeholder/background color.
         background: Color,
     },
+
+    /// SVG icon command.
+    ///
+    /// This is intentionally plan-based rather than raw-string based so parsing
+    /// remains deterministic and outside the hot GPU mesh path.
+    SvgIcon {
+        /// Left position in logical pixels.
+        x: f32,
+
+        /// Top position in logical pixels.
+        y: f32,
+
+        /// Icon box width in logical pixels.
+        width: f32,
+
+        /// Icon box height in logical pixels.
+        height: f32,
+
+        /// Optional accessible title.
+        title: Option<String>,
+
+        /// Parsed SVG paint plan.
+        plan: SvgPaintPlan,
+    },
+}
+
+impl PaintPlan {
+    /// Adds a parsed SVG icon command to the plan.
+    pub fn push_svg_icon(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        title: Option<String>,
+        plan: SvgPaintPlan,
+    ) {
+        if width <= 0.0 || height <= 0.0 || plan.is_empty() {
+            return;
+        }
+
+        self.commands.push(PaintCommand::SvgIcon {
+            x,
+            y,
+            width,
+            height,
+            title,
+            plan,
+        });
+    }
 }
 
 /// Builds a deterministic, style-aware paint plan from a render document.

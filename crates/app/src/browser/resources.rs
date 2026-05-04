@@ -1,16 +1,11 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::too_many_arguments)]
 
-//! Central resource scheduler and network pipeline manager.
+//! Central resource scheduler and HTTP-aware network pipeline manager.
 //!
-//! This module keeps document, stylesheet, image, and future font/script resource
-//! loading behind one typed interface. It coordinates cache bucket selection,
-//! byte limits, request priority metadata, timing diagnostics, batch de-duplication,
-//! and network/cache source accounting.
-//!
-//! It is deliberately conservative. The current implementation executes resource
-//! requests through the existing cache/fetch stack, but makes every resource load
-//! explicit and observable so later modules can add true parallelism, cancellation,
-//! origin limits, and devtools-style timing without rewriting call sites again.
+//! Module 47 adds browser-grade request/response semantics on top of the cache
+//! and fetch stack: request headers, redirect diagnostics, MIME classification,
+//! Cache-Control-driven freshness, and optional Module 46 security checks. This
+//! is where resource loading stops being a glorified `curl` call wearing a hat.
 
 use anyhow::{bail, Context, Result};
 use std::{
@@ -19,33 +14,22 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use syljs::{HttpHeaderList, HttpMimeType};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::browser::{CacheBucket, CacheSource, CacheStore};
-
-const DEFAULT_MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
-const DEFAULT_MAX_STYLESHEET_BYTES: usize = 1024 * 1024;
-const DEFAULT_MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
-const DEFAULT_MAX_FONT_BYTES: usize = 4 * 1024 * 1024;
-const DEFAULT_MAX_SCRIPT_BYTES: usize = 2 * 1024 * 1024;
+use crate::browser::{
+    http::{HttpSemanticsSummary, ResourceHttpRequest},
+    CacheBucket, CacheSource, CacheStore,
+};
 
 /// Browser resource type handled by the network pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum ResourceKind {
-    /// Top-level HTML document.
     Document,
-
-    /// External CSS stylesheet.
     Stylesheet,
-
-    /// Image resource.
     Image,
-
-    /// Font resource reserved for future font loading.
     Font,
-
-    /// JavaScript source text.
     Script,
 }
 
@@ -65,11 +49,11 @@ impl ResourceKind {
     #[must_use]
     pub(crate) const fn default_max_bytes(self) -> usize {
         match self {
-            Self::Document => DEFAULT_MAX_DOCUMENT_BYTES,
-            Self::Stylesheet => DEFAULT_MAX_STYLESHEET_BYTES,
-            Self::Image => DEFAULT_MAX_IMAGE_BYTES,
-            Self::Font => DEFAULT_MAX_FONT_BYTES,
-            Self::Script => DEFAULT_MAX_SCRIPT_BYTES,
+            Self::Document => 8 * 1024 * 1024,
+            Self::Stylesheet => 1024 * 1024,
+            Self::Image => 12 * 1024 * 1024,
+            Self::Font => 4 * 1024 * 1024,
+            Self::Script => 2 * 1024 * 1024,
         }
     }
 
@@ -93,13 +77,8 @@ impl ResourceKind {
 /// Scheduler priority hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum ResourcePriority {
-    /// Navigation-critical resource.
     High,
-
-    /// Page rendering resource.
     Normal,
-
-    /// Opportunistic resource.
     Low,
 }
 
@@ -126,20 +105,12 @@ impl ResourcePriority {
 /// Typed request for a resource.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResourceRequest {
-    /// Resource kind.
     pub kind: ResourceKind,
-
-    /// Absolute URL.
     pub url: String,
-
-    /// Priority hint.
     pub priority: ResourcePriority,
-
-    /// Maximum accepted response body size.
     pub max_bytes: usize,
-
-    /// Navigation id this resource belongs to.
     pub navigation_id: Option<u64>,
+    pub headers: HttpHeaderList,
 }
 
 impl ResourceRequest {
@@ -152,6 +123,7 @@ impl ResourceRequest {
             priority: default_priority(kind),
             max_bytes: kind.default_max_bytes(),
             navigation_id: None,
+            headers: HttpHeaderList::new(),
         }
     }
 
@@ -179,6 +151,12 @@ impl ResourceRequest {
         Self::new(ResourceKind::Script, url).priority(ResourcePriority::High)
     }
 
+    /// Creates a font request.
+    #[must_use]
+    pub(crate) fn font(url: impl Into<String>) -> Self {
+        Self::new(ResourceKind::Font, url).priority(ResourcePriority::Low)
+    }
+
     /// Sets priority.
     #[must_use]
     pub(crate) fn priority(mut self, priority: ResourcePriority) -> Self {
@@ -200,6 +178,13 @@ impl ResourceRequest {
         self
     }
 
+    /// Adds/overrides one HTTP header.
+    #[must_use]
+    pub(crate) fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(name, value);
+        self
+    }
+
     #[must_use]
     fn key(&self) -> ResourceKey {
         ResourceKey {
@@ -218,54 +203,39 @@ struct ResourceKey {
 /// Text resource response.
 #[derive(Debug, Clone)]
 pub(crate) struct ResourceText {
-    /// Request kind.
     pub kind: ResourceKind,
-
-    /// Final URL used for the resource.
     pub url: String,
-
-    /// UTF-8 body.
+    pub final_url: String,
     pub text: String,
-
-    /// Body bytes.
     pub bytes: usize,
-
-    /// Cache source.
     pub source: CacheSource,
-
-    /// Timing data.
     pub timing: ResourceTiming,
+    pub status: u16,
+    pub headers: HttpHeaderList,
+    pub mime: String,
+    pub redirects: usize,
 }
 
 /// Binary resource response.
 #[derive(Debug, Clone)]
 pub(crate) struct ResourceBytes {
-    /// Request kind.
     pub kind: ResourceKind,
-
-    /// Final URL used for the resource.
     pub url: String,
-
-    /// Body bytes.
+    pub final_url: String,
     pub bytes: Vec<u8>,
-
-    /// Cache source.
     pub source: CacheSource,
-
-    /// Timing data.
     pub timing: ResourceTiming,
+    pub status: u16,
+    pub headers: HttpHeaderList,
+    pub mime: String,
+    pub redirects: usize,
 }
 
 /// Timing values captured by the scheduler.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ResourceTiming {
-    /// Time spent waiting before execution. Currently zero unless future queueing is added.
     pub queued: Duration,
-
-    /// Time spent in cache/network fetch.
     pub fetch: Duration,
-
-    /// Full request time observed by the scheduler.
     pub total: Duration,
 }
 
@@ -286,7 +256,13 @@ pub(crate) struct ResourceSummary {
     pub disk_hits: usize,
     pub network_fetches: usize,
     pub disabled_fetches: usize,
+    pub redirects: usize,
+    pub mime_sniffed: usize,
+    pub mime_blocked: usize,
+    pub cacheable: usize,
+    pub not_cacheable: usize,
     pub total_fetch_ms: u128,
+    pub http: HttpSemanticsSummary,
 }
 
 impl ResourceSummary {
@@ -294,7 +270,7 @@ impl ResourceSummary {
     #[must_use]
     pub(crate) fn compact(&self) -> String {
         format!(
-            "total={} ok={} failed={} bytes={} scripts={} script_blocked={} net={} mem={} disk={} disabled={} fetch_ms={}",
+            "total={} ok={} failed={} bytes={} scripts={} script_blocked={} net={} mem={} disk={} disabled={} redirects={} sniffed={} mime_blocked={} cacheable={} not_cacheable={} fetch_ms={} {}",
             self.total,
             self.succeeded,
             self.failed,
@@ -305,7 +281,13 @@ impl ResourceSummary {
             self.memory_hits,
             self.disk_hits,
             self.disabled_fetches,
-            self.total_fetch_ms
+            self.redirects,
+            self.mime_sniffed,
+            self.mime_blocked,
+            self.cacheable,
+            self.not_cacheable,
+            self.total_fetch_ms,
+            self.http.compact(),
         )
     }
 }
@@ -313,10 +295,7 @@ impl ResourceSummary {
 /// Scheduler configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResourceSchedulerPolicy {
-    /// Hard upper bound for batch fetch inputs after de-duplication.
     pub max_batch_items: usize,
-
-    /// Whether script resources are allowed.
     pub allow_scripts: bool,
 }
 
@@ -385,7 +364,6 @@ impl ResourceScheduler {
                 request.kind.as_str()
             );
         }
-
         if request.kind == ResourceKind::Script && !self.policy.allow_scripts {
             self.record_script_block();
             bail!("script resources are disabled by policy");
@@ -395,18 +373,25 @@ impl ResourceScheduler {
             .kind
             .cache_bucket()
             .context("text resource has no cache bucket")?;
-
+        let http_request = self.http_request_for(&request);
         let started = Instant::now();
+
         debug!(
             kind = request.kind.as_str(),
             priority = request.priority.as_str(),
             url = %request.url,
-            "fetching text resource"
+            accept = ?http_request.headers.get("accept"),
+            "fetching HTTP text resource"
         );
 
         let cached = match self
             .cache
-            .get_or_fetch_text_in_bucket(bucket, &request.url)
+            .get_or_fetch_text_in_bucket_with_http(
+                bucket,
+                &request.url,
+                &http_request.headers,
+                request.max_bytes,
+            )
             .await
         {
             Ok(cached) => cached,
@@ -416,32 +401,34 @@ impl ResourceScheduler {
             }
         };
 
-        if cached.bytes > request.max_bytes {
-            self.record_failure(request.kind);
-            bail!(
-                "{} resource `{}` exceeded byte limit: {} > {}",
-                request.kind.as_str(),
-                request.url,
-                cached.bytes,
-                request.max_bytes
-            );
-        }
-
         let timing = ResourceTiming {
             queued: Duration::ZERO,
             fetch: started.elapsed(),
             total: started.elapsed(),
         };
 
-        self.record_success(request.kind, cached.source, cached.bytes, timing);
+        self.record_success(
+            request.kind,
+            cached.source,
+            cached.bytes,
+            timing,
+            cached.redirects,
+            &cached.headers,
+            &cached.mime,
+        );
 
         Ok(ResourceText {
             kind: request.kind,
             url: cached.url,
+            final_url: cached.final_url,
             text: cached.text,
             bytes: cached.bytes,
             source: cached.source,
             timing,
+            status: cached.status,
+            headers: cached.headers,
+            mime: cached.mime,
+            redirects: cached.redirects,
         })
     }
 
@@ -460,19 +447,26 @@ impl ResourceScheduler {
             .kind
             .cache_bucket()
             .context("binary resource has no cache bucket")?;
-
+        let http_request = self.http_request_for(&request);
         let started = Instant::now();
+
         debug!(
             kind = request.kind.as_str(),
             priority = request.priority.as_str(),
             max_bytes = request.max_bytes,
             url = %request.url,
-            "fetching binary resource"
+            accept = ?http_request.headers.get("accept"),
+            "fetching HTTP binary resource"
         );
 
         let cached = match self
             .cache
-            .get_or_fetch_bytes_in_bucket(bucket, &request.url, request.max_bytes)
+            .get_or_fetch_bytes_in_bucket_with_http(
+                bucket,
+                &request.url,
+                &http_request.headers,
+                request.max_bytes,
+            )
             .await
         {
             Ok(cached) => cached,
@@ -488,14 +482,27 @@ impl ResourceScheduler {
             total: started.elapsed(),
         };
 
-        self.record_success(request.kind, cached.source, cached.bytes.len(), timing);
+        self.record_success(
+            request.kind,
+            cached.source,
+            cached.bytes.len(),
+            timing,
+            cached.redirects,
+            &cached.headers,
+            &cached.mime,
+        );
 
         Ok(ResourceBytes {
             kind: request.kind,
             url: cached.url,
+            final_url: cached.final_url,
             bytes: cached.bytes,
             source: cached.source,
             timing,
+            status: cached.status,
+            headers: cached.headers,
+            mime: cached.mime,
+            redirects: cached.redirects,
         })
     }
 
@@ -505,7 +512,6 @@ impl ResourceScheduler {
         requests: impl IntoIterator<Item = ResourceRequest>,
     ) -> Vec<ResourceBatchTextResult> {
         let mut deduped = BTreeMap::<BatchSortKey, ResourceRequest>::new();
-
         for request in requests {
             let sort_key = BatchSortKey {
                 priority: request.priority.sort_rank(),
@@ -534,7 +540,6 @@ impl ResourceScheduler {
         requests: impl IntoIterator<Item = ResourceRequest>,
     ) -> Vec<ResourceBatchBytesResult> {
         let mut deduped = BTreeMap::<BatchSortKey, ResourceRequest>::new();
-
         for request in requests {
             let sort_key = BatchSortKey {
                 priority: request.priority.sort_rank(),
@@ -557,11 +562,21 @@ impl ResourceScheduler {
         results
     }
 
+    fn http_request_for(&self, request: &ResourceRequest) -> ResourceHttpRequest {
+        let mut http = ResourceHttpRequest::for_resource(request);
+        for (name, value) in request.headers.to_pairs() {
+            http.headers.insert(name, value);
+        }
+        http
+    }
+
     fn validate_request(&self, request: &ResourceRequest) -> Result<()> {
         if request.max_bytes == 0 {
             bail!("resource `{}` has a zero byte limit", request.url);
         }
-
+        if request.headers.byte_len() > 64 * 1024 {
+            bail!("resource `{}` request headers exceed limit", request.url);
+        }
         let parsed = Url::parse(&request.url)
             .with_context(|| format!("invalid resource URL `{}`", request.url))?;
         match parsed.scheme() {
@@ -576,19 +591,45 @@ impl ResourceScheduler {
         source: CacheSource,
         bytes: usize,
         timing: ResourceTiming,
+        redirects: usize,
+        headers: &HttpHeaderList,
+        mime: &str,
     ) {
         if let Ok(mut summary) = self.summary.lock() {
             summary.total = summary.total.saturating_add(1);
             summary.succeeded = summary.succeeded.saturating_add(1);
             summary.bytes = summary.bytes.saturating_add(bytes);
+            summary.redirects = summary.redirects.saturating_add(redirects);
             summary.total_fetch_ms = summary
                 .total_fetch_ms
                 .saturating_add(timing.fetch.as_millis());
+            summary.http.requests = summary.http.requests.saturating_add(1);
+            summary.http.redirects = summary.http.redirects.saturating_add(redirects);
+            summary.http.headers_bytes = summary
+                .http
+                .headers_bytes
+                .saturating_add(headers.byte_len());
+
+            let mime_type = HttpMimeType::new(mime.to_owned());
+            if mime_type.sniffed {
+                summary.mime_sniffed = summary.mime_sniffed.saturating_add(1);
+                summary.http.mime_sniffed = summary.http.mime_sniffed.saturating_add(1);
+            }
+            if headers
+                .get("cache-control")
+                .is_some_and(|value| !value.contains("no-store"))
+            {
+                summary.cacheable = summary.cacheable.saturating_add(1);
+                summary.http.cacheable = summary.http.cacheable.saturating_add(1);
+            } else {
+                summary.not_cacheable = summary.not_cacheable.saturating_add(1);
+                summary.http.not_cacheable = summary.http.not_cacheable.saturating_add(1);
+            }
 
             match kind {
                 ResourceKind::Document => summary.documents = summary.documents.saturating_add(1),
                 ResourceKind::Stylesheet => {
-                    summary.stylesheets = summary.stylesheets.saturating_add(1);
+                    summary.stylesheets = summary.stylesheets.saturating_add(1)
                 }
                 ResourceKind::Image => summary.images = summary.images.saturating_add(1),
                 ResourceKind::Font => summary.fonts = summary.fonts.saturating_add(1),
@@ -600,11 +641,9 @@ impl ResourceScheduler {
                     summary.disabled_fetches = summary.disabled_fetches.saturating_add(1);
                 }
                 CacheSource::Network => {
-                    summary.network_fetches = summary.network_fetches.saturating_add(1);
+                    summary.network_fetches = summary.network_fetches.saturating_add(1)
                 }
-                CacheSource::Memory => {
-                    summary.memory_hits = summary.memory_hits.saturating_add(1);
-                }
+                CacheSource::Memory => summary.memory_hits = summary.memory_hits.saturating_add(1),
                 CacheSource::Disk => summary.disk_hits = summary.disk_hits.saturating_add(1),
             }
         }
@@ -649,9 +688,10 @@ struct BatchSortKey {
 #[must_use]
 const fn default_priority(kind: ResourceKind) -> ResourcePriority {
     match kind {
-        ResourceKind::Document | ResourceKind::Stylesheet => ResourcePriority::High,
+        ResourceKind::Document | ResourceKind::Stylesheet | ResourceKind::Script => {
+            ResourcePriority::High
+        }
         ResourceKind::Image | ResourceKind::Font => ResourcePriority::Low,
-        ResourceKind::Script => ResourcePriority::High,
     }
 }
 
@@ -667,19 +707,22 @@ mod tests {
 
     #[test]
     fn request_defaults_follow_resource_kind() {
-        let doc = ResourceRequest::document("https://example.com/");
-        assert_eq!(doc.kind, ResourceKind::Document);
-        assert_eq!(doc.priority, ResourcePriority::High);
-        assert_eq!(doc.max_bytes, DEFAULT_MAX_DOCUMENT_BYTES);
+        let document = ResourceRequest::document("https://example.com/");
+        assert_eq!(document.kind, ResourceKind::Document);
+        assert_eq!(document.priority, ResourcePriority::High);
+        assert_eq!(
+            document.max_bytes,
+            ResourceKind::Document.default_max_bytes()
+        );
 
         let image = ResourceRequest::image("https://example.com/a.png");
         assert_eq!(image.kind, ResourceKind::Image);
         assert_eq!(image.priority, ResourcePriority::Low);
-        assert_eq!(image.max_bytes, DEFAULT_MAX_IMAGE_BYTES);
+        assert_eq!(image.max_bytes, ResourceKind::Image.default_max_bytes());
     }
 
     #[test]
-    fn summary_compact_is_stable() {
+    fn summary_compact_contains_http_metrics() {
         let summary = ResourceSummary {
             total: 2,
             succeeded: 1,
@@ -689,6 +732,6 @@ mod tests {
             ..ResourceSummary::default()
         };
         assert!(summary.compact().contains("total=2"));
-        assert!(summary.compact().contains("bytes=42"));
+        assert!(summary.compact().contains("http requests="));
     }
 }

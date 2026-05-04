@@ -27,6 +27,9 @@ pub mod bytecode;
 /// Canvas 2D simulation and command recording.
 pub mod canvas;
 
+/// Cache API and Service Worker simulation.
+pub mod cache_api;
+
 /// AST-to-bytecode compiler.
 pub mod compiler;
 
@@ -41,6 +44,9 @@ pub mod dom;
 
 /// JavaScript event loop, timers, tasks, microtasks, and RAF.
 pub mod event_loop;
+
+/// HTTP request/response semantics.
+pub mod http;
 
 /// Style/layout/paint invalidation bridge.
 pub mod invalidation;
@@ -69,6 +75,12 @@ pub mod value;
 /// Script loading and execution pipeline.
 pub mod script_pipeline;
 
+/// Browser security policy and origin checks.
+pub mod security;
+
+/// Synthetic Google/GitHub/Wikipedia site compatibility harness.
+pub mod site_compat;
+
 /// Transferable ArrayBuffer and typed-array-lite runtime.
 pub mod transfer;
 
@@ -95,6 +107,7 @@ pub use benchmark::{
     BenchmarkScriptSummary,
 };
 pub use bytecode::{BytecodeFunction, Constant, Instruction};
+pub use cache_api::*;
 pub use canvas::{
     install_canvas_globals, CanvasCommand, CanvasContextId, CanvasContextSnapshot, CanvasElementId,
     CanvasElementSnapshot, CanvasGradientStop, CanvasHost, CanvasImageData, CanvasMetrics,
@@ -116,6 +129,7 @@ pub use event_loop::{
     install_event_loop_globals, EventLoopConfig, EventLoopMetrics, EventLoopRunSummary,
     JsEventLoop, QueuedJob, QueuedJobKind, RafId, ScheduledVm, TaskId, TimerId,
 };
+pub use http::*;
 pub use invalidation::{
     apply_reflow_request_to_invalidation_engine, collect_cssom_mutation_invalidations,
     collect_dom_snapshot_invalidations, InvalidationBatch, InvalidationCoalescer,
@@ -144,6 +158,13 @@ pub use script_pipeline::{
     ScriptLoadMode, ScriptPipelineConfig, ScriptPipelineHooks, ScriptPipelineMetrics,
     ScriptPipelineRun, ScriptResourceLoader, ScriptSource, SharedScriptPipelineHooks,
     SharedScriptResourceLoader, WebApiScriptResourceLoader,
+};
+pub use security::*;
+pub use site_compat::{
+    build_site_compatibility_script, run_site_compatibility_harness, SiteCompatibilityAggregate,
+    SiteCompatibilityHarnessConfig, SiteCompatibilityHarnessRun, SiteCompatibilityMetrics,
+    SiteCompatibilityProfile, SiteCompatibilityScore, SiteCompatibilitySignal,
+    SiteCompatibilitySuite, SiteCompatibilitySuiteRun,
 };
 pub use span::{SourceId, Span};
 pub use token::{Keyword, Token, TokenKind};
@@ -350,3 +371,15 @@ mod script_pipeline_tests;
 
 #[cfg(test)]
 mod transfer_tests;
+
+#[cfg(test)]
+mod cache_api_tests;
+
+#[cfg(test)]
+mod http_tests;
+
+#[cfg(test)]
+mod security_tests;
+
+#[cfg(test)]
+mod site_compat_tests;

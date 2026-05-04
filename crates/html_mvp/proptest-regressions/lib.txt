@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc fcb1c47dd2bb1bfd1212a10fcbfa6b5d196ac041dabecefd22aa4f82c0976c3f # shrinks to src = "<div></div>"
+cc 01a0e6c78f814f3f9eed9c79191b64654b492ce3011bab1353f1eecf313c1012 # shrinks to src = "<li><a owrft=\"\u{202e}\"><ul>!</ul></a></li>"

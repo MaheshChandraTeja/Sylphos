@@ -2,6 +2,7 @@ pub(crate) mod font_atlas;
 pub(crate) mod image_atlas;
 mod mesh;
 mod shared;
+mod svg_icon_bridge;
 mod text;
 pub(crate) mod text_measure_bridge;
 

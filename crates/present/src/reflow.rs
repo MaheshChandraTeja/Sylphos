@@ -484,6 +484,13 @@ pub fn command_bounds(command: &PaintCommand) -> Option<DirtyRect> {
             width,
             height,
             ..
+        }
+        | PaintCommand::SvgIcon {
+            x,
+            y,
+            width,
+            height,
+            ..
         } => DirtyRect::new(*x, *y, *width, *height),
         PaintCommand::TextPlaceholder {
             x, y, text, size, ..

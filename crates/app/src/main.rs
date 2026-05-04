@@ -31,7 +31,8 @@ use browser::{
     ResourceSummary, StylesheetLoadSummary, TabId, TabManager, TOOLBAR_HEIGHT,
 };
 use js::{
-    execute_document_scripts, MediaCanvasWorkerHost, ScriptExecutionSummary, WebPlatformHost,
+    execute_document_scripts, MediaCanvasWorkerHost, ScriptExecutionSummary, ServiceWorkerHost,
+    WebPlatformHost,
 };
 use render::{DecodedImageStore, SharedPaintState};
 
@@ -500,6 +501,18 @@ impl App {
                         worker_bytes = page.scripts.media.worker_bytes,
                         youtube_signals = page.scripts.media.youtube_signals,
                         media_summary = %page.scripts.media.compact(),
+                        service_worker_effects = page.scripts.service_worker.effects,
+                        service_worker_registrations = page.scripts.service_worker.registrations,
+                        service_worker_script_fetches = page.scripts.service_worker.script_fetches,
+                        service_worker_script_failures = page.scripts.service_worker.script_fetch_failures,
+                        service_worker_cache_opens = page.scripts.service_worker.cache_opens,
+                        service_worker_cache_adds = page.scripts.service_worker.cache_adds,
+                        service_worker_cache_hits = page.scripts.service_worker.cache_hits,
+                        service_worker_cache_misses = page.scripts.service_worker.cache_misses,
+                        service_worker_precache_fetches = page.scripts.service_worker.precache_fetches,
+                        service_worker_precache_failures = page.scripts.service_worker.precache_failures,
+                        service_worker_precache_bytes = page.scripts.service_worker.precache_bytes,
+                        service_worker_summary = %page.scripts.service_worker.compact(),
                         images_discovered = page.images_discovered,
                         images_decoded = page.images_decoded,
                         images_failed = page.images_failed,
@@ -889,6 +902,8 @@ async fn load_url(url: &str, resources: ResourceScheduler) -> Result<LoadedPage>
         WebPlatformHost::new(resources.cache().root().join("web-platform"), &page_url);
     let mut media_host =
         MediaCanvasWorkerHost::new(resources.cache().root().join("media-platform"), &page_url);
+    let mut service_worker =
+        ServiceWorkerHost::new(resources.cache().root().join("service-worker"), &page_url);
     let script_summary = execute_document_scripts(
         &document,
         &mut render_document,
@@ -897,6 +912,7 @@ async fn load_url(url: &str, resources: ResourceScheduler) -> Result<LoadedPage>
         None,
         &mut web_platform,
         &mut media_host,
+        &mut service_worker,
     )
     .await;
 

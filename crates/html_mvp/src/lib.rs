@@ -1,23 +1,40 @@
 #![deny(unsafe_code)]
 
+//! `html_mvp` is Sylphos' compact HTML5-lite parsing crate.
+//!
+//! Module 48 upgrades the original minimal stack parser into a more browser-like
+//! pipeline while preserving the public `parse()` and `serialize_document()` API:
+//!
+//! - tolerant tokenization with raw text and RCDATA handling,
+//! - named and numeric entity decoding,
+//! - implied `html`, `head`, and `body` normalization,
+//! - common implied end-tag repairs for paragraphs, lists, options, and tables,
+//! - deterministic serialization for cache, tests, and diagnostics.
+
 pub mod dom;
+pub mod normalizer;
 
 mod parser;
 mod serializer;
 mod tokenizer;
 
 #[doc(inline)]
-pub use dom::Document;
+pub use dom::{Document, Element, Node};
 
 #[doc(inline)]
-pub use dom::Node;
+pub use normalizer::{normalize_document, NormalizationReport};
 
 #[doc(inline)]
-pub use parser::parse;
+pub use parser::{parse, parse_fragment, parse_with_options, ParseOptions, ParseOutput};
 
 #[doc(inline)]
 pub use serializer::serialize_document;
 
+#[doc(inline)]
+pub use tokenizer::decode_entities;
+
+/// Structural DOM equality helper for round-trip tests.
+#[must_use]
 pub fn dom_eq(a: &Document, b: &Document) -> bool {
     dom::dom_eq(a, b)
 }
@@ -30,7 +47,10 @@ mod prop_tests {
     use proptest::string::string_regex;
     use proptest::test_runner::TestCaseError;
 
-    const TAGS: &[&str] = &["div", "span", "p", "a", "b", "i", "u", "br", "img"];
+    const TAGS: &[&str] = &[
+        "div", "span", "p", "a", "b", "i", "u", "br", "img", "ul", "li", "section", "script",
+        "style", "textarea", "title",
+    ];
 
     fn regex_strategy(pattern: &str) -> BoxedStrategy<String> {
         match string_regex(pattern) {
@@ -41,7 +61,7 @@ mod prop_tests {
 
     fn html_strategy() -> impl Strategy<Value = String> {
         let key: BoxedStrategy<String> = regex_strategy("[a-z]{1,6}");
-        let text: BoxedStrategy<String> = regex_strategy("\\PC{0,24}");
+        let text: BoxedStrategy<String> = regex_strategy("[^<>]{0,24}");
 
         let entity_text: BoxedStrategy<String> = prop_oneof![
             Just("&lt;".to_owned()),
@@ -49,6 +69,7 @@ mod prop_tests {
             Just("&amp;".to_owned()),
             Just("&quot;".to_owned()),
             Just("&apos;".to_owned()),
+            Just("&#65;&#x41;".to_owned()),
             any::<String>().prop_map(|value| value.replace(['<', '>'], "")),
         ]
         .boxed();
@@ -82,10 +103,15 @@ mod prop_tests {
                         return Just(start).boxed();
                     }
 
+                    if ["script", "style"].contains(&tag_name.as_str()) {
+                        return Just(format!("{start}if (a < b) {{ x = 1; }}</{tag_name}>"))
+                            .boxed();
+                    }
+
                     if depth == 0 {
                         let leaf_text = prop_oneof![
                             Just(String::new()),
-                            regex_strategy("\\PC{0,20}"),
+                            regex_strategy("[^<>]{0,20}"),
                             Just("&lt;&gt;&amp;&quot;&apos;".to_owned()),
                         ];
 
@@ -96,7 +122,7 @@ mod prop_tests {
 
                     let child = prop_oneof![
                         Just(String::new()),
-                        regex_strategy("\\PC{0,20}"),
+                        regex_strategy("[^<>]{0,20}"),
                         element(depth - 1, attrs.clone()),
                     ];
 
@@ -110,7 +136,7 @@ mod prop_tests {
         }
 
         prop_oneof![
-            regex_strategy("\\PC{0,40}"),
+            regex_strategy("[^<>]{0,40}"),
             element(2, attrs.clone()),
             prop::collection::vec(element(1, attrs), 1..3).prop_map(|items| items.join("")),
         ]
@@ -134,3 +160,6 @@ mod prop_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod html5_lite_tests;

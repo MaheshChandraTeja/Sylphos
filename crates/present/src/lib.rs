@@ -1,6 +1,8 @@
 #![deny(unsafe_code)]
-#![doc = "Presentation-layer extraction, CSS, layout, mutation, reflow, and paint planning for Sylphos."]
+#![doc = "Presentation-layer extraction, CSS, layout, mutation, reflow, SVG/icon, text, and paint planning for Sylphos."]
 
+/// Accessibility tree, focus navigation, and keyboard target helpers.
+pub mod accessibility;
 /// Box-model primitives.
 pub mod box_model;
 /// Color parsing and color conversion helpers.
@@ -45,9 +47,18 @@ pub mod style;
 pub mod styled;
 /// External stylesheet metadata.
 pub mod stylesheet;
+/// SVG and icon rendering-lite support.
+pub mod svg;
 /// Text shaping, measurement, and layout helpers.
 pub mod text;
 
+pub use accessibility::{
+    build_accessibility_tree, build_accessibility_tree_with_options, focus_target_control,
+    focused_target_from_document, move_accessibility_focus, text_accessible_rect,
+    AccessibilityBuildOptions, AccessibilityMetrics, AccessibilityTree, AccessibleNode,
+    AccessibleNodeId, AccessibleRole, AccessibleState, FocusMoveResult, FocusNavigationDirection,
+    KeyboardFocusTarget, TabStop,
+};
 pub use box_model::{
     BoxModelStylesLite, BoxStyleLite, ComputedBoxModelStyles, ComputedBoxStyle, DisplayLite,
     EdgeSizes,
@@ -100,6 +111,12 @@ pub use selector::{
 pub use style::{ComputedPaintStyle, StyleSheetLite};
 pub use styled::{compute_styled_document, StyledDocument, StyledNode};
 pub use stylesheet::{StyleSourceLite, StylesheetLink};
+pub use svg::{
+    build_svg_paint_plan, builtin_icon_registry, parse_svg_lite, parse_svg_path_lite, IconRegistry,
+    SvgCircle, SvgColor, SvgDiagnostics, SvgDocument, SvgLine, SvgNode, SvgPaint, SvgPaintCommand,
+    SvgPaintPlan, SvgPath, SvgPathSegment, SvgPoint, SvgPolyline, SvgRect, SvgViewBox,
+    DEFAULT_ICON_SIZE,
+};
 pub use text::{
     layout_text, measure_text, parse_font_style, parse_font_weight, parse_text_align,
     parse_text_overflow, parse_text_transform, parse_white_space, positioned_glyphs, shape_text,
@@ -114,4 +131,10 @@ pub use text::{
 mod tests;
 
 #[cfg(test)]
+mod accessibility_tests;
+
+#[cfg(test)]
 mod text_tests;
+
+#[cfg(test)]
+mod svg_tests;

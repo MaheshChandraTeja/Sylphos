@@ -22,9 +22,10 @@ It is not pretending that a research browser and the full web platform are the
 same thing.
 
 It is a local-first systems project for building the browser pieces directly:
-networking, tolerant parsing, presentation extraction, CSS-lite, forms, DOM
-mutation, script-effect handling, media/canvas/worker signals, resource caching,
-tabs, history, reflow, paint planning, and native rendering.
+networking, tolerant parsing, presentation extraction, CSS-lite, forms,
+accessibility, DOM mutation, script-effect handling, media/canvas/worker
+signals, service-worker/cache simulation, resource caching, tabs, history,
+reflow, paint planning, and native rendering.
 
 No fake browser magic.
 No mystery cloud service.
@@ -45,10 +46,11 @@ The current workspace contains:
 
   * a native desktop app shell
   * an async HTTP/TLS fetch crate
-  * a small HTML tokenizer/parser/serializer
-  * a presentation crate with CSS-lite, layout, paint, forms, mutation, and reflow
+  * a normalized HTML tokenizer/parser/serializer
+  * a presentation crate with CSS-lite, layout, paint, forms, text, SVG,
+    accessibility, mutation, and reflow
   * a research JavaScript subset VM called `syljs`
-  * app-side script discovery and Web Platform effect handling
+  * app-side script discovery and Web Platform/service-worker effect handling
   * GPU text/image rendering helpers
   * local cache and history storage
   * tests covering the active crates
@@ -138,13 +140,16 @@ Current state:
   * the Rust workspace builds as six crates
   * the native app crate is `sylphos`
   * the presentation crate includes forms, mutation, CSSOM-lite, selector work,
-    invalidation, incremental reflow, and paint planning
+    invalidation, incremental reflow, accessibility, SVG, text measurement, and
+    paint planning
   * the browser shell has tabs, history, cache, resources, stylesheets, forms,
-    images, and DOM interaction controllers
+    images, HTTP semantics, security bridges, and DOM interaction controllers
   * the app-side JavaScript layer captures bounded script effects for DOM,
-    CSSOM, storage, cookies, history, fetch/XHR, media, canvas, and workers
+    CSSOM, storage, cookies, history, fetch/XHR, media, canvas, workers, and
+    service-worker/cache effects
   * the separate `syljs` crate implements a research JavaScript subset VM with
-    tests for DOM, CSSOM, Web APIs, media, Canvas 2D, workers, transferables,
+    tests for DOM, CSSOM, Web APIs, HTTP/cache/security, Service Worker and
+    Cache API, media, Canvas 2D, workers, transferables, site compatibility,
     and benchmarks
   * the full workspace currently passes check, Clippy, and tests
 
@@ -181,8 +186,8 @@ Fetch | HTTP/HTTPS, redirects, compression, limits, browser-like headers | Activ
 Cache | HTML, image, stylesheet, font, script buckets with TTL policy | Active
 History | Successful visit recording | Active
 Tabs | Open, switch, close, back, forward, reload | Active
-HTML MVP | Tokenizer, parser, DOM, serializer, entity decoding | Active
-Presentation | DOM extraction, text, headings, links, images, forms | Active
+HTML MVP | Tokenizer, parser, DOM, serializer, entity decoding, shell/list/table normalization | Active
+Presentation | DOM extraction, text, headings, links, images, forms, SVG, accessibility | Active
 CSS-lite | Rule parsing, selector matching, computed paint styles | Active
 Stylesheets | External stylesheet loading and `@import` discovery | Active
 Forms | Focus, edit, GET submission URL construction | Active
@@ -191,8 +196,11 @@ Mutation | Mutable DOM model and dirty flags | Active
 Reflow | Incremental reflow engine and dirty regions | Active
 App script layer | Bounded script discovery and effect capture | Active
 Web Platform effects | Storage, cookies, history, fetch/XHR, media/canvas/worker signals | Active
-SylJS | JavaScript subset frontend, bytecode VM, event loop, DOM/CSSOM/Web API hosts | Active research crate
+Service Worker | App-side registration/cache/precache capture plus SylJS Cache API host | Active research surface
+HTTP and security | Shared HTTP semantics, MIME sniffing, freshness, CORS-lite, CSP-lite, sandbox and mixed-content checks | Active research surface
+SylJS | JavaScript subset frontend, bytecode VM, event loop, DOM/CSSOM/Web API/HTTP/cache/security hosts | Active research crate
 Benchmarks | Synthetic YouTube-like SylJS benchmark harness | Active research crate
+Site compatibility | Synthetic Google/GitHub/Wikipedia harness and metrics | Active research crate
 Full browser compatibility | Complete HTML/CSS/JS platform parity | Not claimed
 
 Legend:
@@ -211,11 +219,11 @@ Sylphos is layered from network and parsing up to app rendering.
 ┌───────────────────────────────────────────────────────────────┐
 │ Native App Shell: window, toolbar, tabs, input, navigation     │
 ├───────────────────────────────────────────────────────────────┤
-│ App Browser Services: cache, history, resources, images        │
+│ App Browser Services: cache, history, resources, images, HTTP  │
 ├───────────────────────────────────────────────────────────────┤
-│ App Script Effects: DOM, CSSOM, storage, cookies, media        │
+│ App Script Effects: DOM, CSSOM, storage, cookies, SW/cache     │
 ├───────────────────────────────────────────────────────────────┤
-│ Presentation: extraction, selectors, forms, mutation, reflow   │
+│ Presentation: extraction, selectors, forms, a11y, reflow       │
 ├───────────────────────────────────────────────────────────────┤
 │ HTML MVP: tokenizer, parser, DOM, serializer                   │
 ├───────────────────────────────────────────────────────────────┤
@@ -235,9 +243,9 @@ Sylphos is layered from network and parsing up to app rendering.
 ├───────────────────────────────────────────────────────────────┤
 │ VM / Values / Promise-lite / Event Loop                       │
 ├───────────────────────────────────────────────────────────────┤
-│ Host APIs: DOM, CSSOM, Web API, Media, Canvas, Worker          │
+│ Host APIs: DOM, CSSOM, Web API, HTTP, Cache, Security          │
 ├───────────────────────────────────────────────────────────────┤
-│ Benchmarks and isolated-worker experiments                     │
+│ Media, Canvas, Worker, site compatibility, and benchmarks      │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -275,6 +283,9 @@ stylesheet loading + CSSOM-lite application
 app-side script discovery and bounded effect capture
   |
   v
+Web Platform, media/canvas/worker, service-worker/cache summaries
+  |
+  v
 image discovery, fetch, decode
   |
   v
@@ -301,9 +312,9 @@ Crate | Role
 --- | ---
 `crates/app` | Native browser shell and orchestration
 `crates/fetch` | Async HTTP/TLS client with redirects, decoding, and limits
-`crates/html_mvp` | Minimal HTML tokenizer, parser, DOM, serializer, entity decoding
-`crates/present` | Presentation model, CSS-lite, layout, forms, mutation, reflow, paint
-`crates/syljs` | JavaScript subset VM and Web Platform research runtime
+`crates/html_mvp` | HTML tokenizer, parser, DOM, serializer, entity decoding, normalization
+`crates/present` | Presentation model, CSS-lite, text, SVG, accessibility, layout, forms, mutation, reflow, paint
+`crates/syljs` | JavaScript subset VM and Web Platform, HTTP, cache, security, Service Worker research runtime
 `crates/util` | Tracing setup and shared utility exports
 
 The root `Cargo.toml` owns the shared dependency versions and lint policy. The
@@ -323,6 +334,8 @@ The app shell currently provides:
   * tab-local navigation state
   * persistent history recording
   * cache policy setup
+  * HTTP request/response classification for resource loading
+  * security-policy bridge modules for CORS-lite, CSP-lite, sandbox, and mixed content
   * page loading on a Tokio runtime
   * async pipeline messages back to the UI thread
   * cursor changes for hit-tested links and controls
@@ -339,6 +352,9 @@ The `present` crate currently covers:
 
   * render-document types
   * text, headings, links, images, and fallback blocks
+  * text shaping, measurement, line layout, and glyph atlas requests
+  * SVG/icon parsing and paint-plan generation
+  * accessibility tree construction and focus navigation primitives
   * form extraction and form submission data
   * CSS-lite parsing
   * selector matching and specificity
@@ -374,6 +390,7 @@ It currently includes modules for:
   * fetch and XHR effect detection
   * timer/event-loop summaries
   * media, canvas, worker, and MediaSource signal detection
+  * service-worker registration, cache open/add/match, and precache summaries
 
 This is not a full JavaScript engine in the app shell.
 
@@ -398,11 +415,15 @@ It currently includes:
   * DOM host bindings
   * CSSOM host bindings
   * Web API host bindings
+  * HTTP semantics, MIME sniffing, and cache-control freshness logic
+  * origin security, CORS-lite, CSP-lite, sandbox, mixed-content, and secure-context checks
+  * Cache API and Service Worker simulation
   * media and MediaSource simulation
   * Canvas 2D command recording
   * Worker-lite and isolated-worker paths
   * transferables
   * synthetic YouTube-like benchmark generation and metrics
+  * synthetic Google/GitHub/Wikipedia site compatibility harness and metrics
 
 SylJS is not V8. It is not trying to be V8 with a smaller logo.
 
@@ -551,6 +572,11 @@ Current cache buckets include:
   * fonts
   * scripts
 
+The app-side Service Worker bridge can capture registration, Cache API opens,
+adds, matches, and deterministic precache fetches into the same local resource
+pipeline. This is a simulation surface, not a claim of full browser Service
+Worker parity.
+
 The cache has:
 
   * TTL policy per resource kind
@@ -585,7 +611,13 @@ Current privacy posture:
   * local cache and history only
   * user navigation triggers document fetches
   * app-side script effects are bounded
+  * service-worker/cache effects are simulated and summarized locally
   * cache can be disabled or cleared from the CLI
+
+Current security work includes CORS-lite checks, CSP-lite source matching,
+sandbox flags, mixed-content policy, secure-context checks for Service Worker
+registration, and MIME/destination guarding. These are research-grade browser
+policy surfaces, not a production sandbox claim.
 
 This is still a browser-like program, so it makes network requests when asked
 to navigate. It is local-first, not offline-only.
@@ -600,8 +632,9 @@ Sylphos currently does not claim:
   * full CSS cascade/layout compatibility
   * full JavaScript engine compatibility in the app shell
   * full DOM API coverage
-  * full accessibility tree support
+  * full accessibility platform integration
   * full browser security sandboxing
+  * full Service Worker lifecycle parity
   * production-grade site compatibility
 
 The point is not to pretend these are small missing checkboxes.

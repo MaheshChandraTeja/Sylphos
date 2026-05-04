@@ -6,7 +6,7 @@ use tracing::warn;
 use super::{
     font_atlas::FontAtlas,
     image_atlas::{DecodedImageStore, ImageAtlas, ImageAtlasEntry},
-    text,
+    svg_icon_bridge, text,
 };
 
 const VERTEX_FLOATS: usize = 9;
@@ -67,6 +67,25 @@ impl Mesh {
             top_left,
             bottom_right,
             top_right,
+        ]);
+    }
+
+    pub(crate) fn push_solid_triangle(
+        &mut self,
+        a: [f32; 2],
+        b: [f32; 2],
+        c: [f32; 2],
+        color: Color,
+        canvas: CanvasSize,
+    ) {
+        if !triangle_intersects_canvas(a, b, c, canvas) {
+            return;
+        }
+
+        self.vertices.extend_from_slice(&[
+            Vertex::solid(a[0], a[1], color, canvas),
+            Vertex::solid(b[0], b[1], color, canvas),
+            Vertex::solid(c[0], c[1], color, canvas),
         ]);
     }
 
@@ -346,6 +365,26 @@ pub(crate) fn build_draw_mesh_from_plan(
                     canvas,
                 );
             }
+            PaintCommand::SvgIcon {
+                x,
+                y,
+                width,
+                height,
+                plan,
+                ..
+            } => {
+                svg_icon_bridge::append_svg_icon(
+                    &mut mesh,
+                    plan,
+                    Rect {
+                        x: *x,
+                        y: *y,
+                        width: *width,
+                        height: *height,
+                    },
+                    canvas,
+                );
+            }
         }
     }
 
@@ -449,6 +488,19 @@ fn clip_textured_rect(rect: Rect, tex: TexRect, canvas: CanvasSize) -> Option<Cl
         v0: lerp(tex.v0, tex.v1, top_ratio),
         v1: lerp(tex.v0, tex.v1, bottom_ratio),
     })
+}
+
+fn triangle_intersects_canvas(a: [f32; 2], b: [f32; 2], c: [f32; 2], canvas: CanvasSize) -> bool {
+    if canvas.width <= 0.0 || canvas.height <= 0.0 {
+        return false;
+    }
+
+    let min_x = a[0].min(b[0]).min(c[0]);
+    let max_x = a[0].max(b[0]).max(c[0]);
+    let min_y = a[1].min(b[1]).min(c[1]);
+    let max_y = a[1].max(b[1]).max(c[1]);
+
+    max_x >= 0.0 && max_y >= 0.0 && min_x <= canvas.width && min_y <= canvas.height
 }
 
 fn lerp(left: f32, right: f32, amount: f32) -> f32 {

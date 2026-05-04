@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 //! Script discovery, loading, and source-order execution.
 
 use anyhow::{Context, Result};
@@ -9,8 +11,9 @@ use url::Url;
 
 use crate::browser::{CacheSource, ResourceRequest, ResourceScheduler};
 use crate::js::{
-    BrowserEventLoop, JavaScriptRuntime, MediaCanvasWorkerHost, MediaCanvasWorkerSummary,
-    ScriptProgram, WebPlatformHost, WebPlatformSummary,
+    capture_service_worker_effects, BrowserEventLoop, JavaScriptRuntime, MediaCanvasWorkerHost,
+    MediaCanvasWorkerSummary, ScriptProgram, ServiceWorkerHost, ServiceWorkerSummary,
+    WebPlatformHost, WebPlatformSummary,
 };
 
 const MAX_INLINE_SCRIPT_BYTES: usize = 512 * 1024;
@@ -150,6 +153,9 @@ pub(crate) struct ScriptExecutionSummary {
 
     /// Media/canvas/worker host summary.
     pub media: MediaCanvasWorkerSummary,
+
+    /// Service Worker and Cache API host summary.
+    pub service_worker: ServiceWorkerSummary,
 }
 
 /// Discovers, loads, and executes document scripts in conservative source order.
@@ -161,6 +167,7 @@ pub(crate) async fn execute_document_scripts(
     navigation_id: Option<u64>,
     web_platform: &mut WebPlatformHost,
     media_host: &mut MediaCanvasWorkerHost,
+    service_worker: &mut ServiceWorkerHost,
 ) -> ScriptExecutionSummary {
     let scripts = collect_script_sources(parsed_document);
     let mut summary = ScriptExecutionSummary {
@@ -201,6 +208,7 @@ pub(crate) async fn execute_document_scripts(
                 &mut event_loop,
                 web_platform,
                 media_host,
+                service_worker,
             )
             .await
             {
@@ -234,6 +242,8 @@ pub(crate) async fn execute_document_scripts(
             let execution = runtime.execute(&program);
             apply_web_platform_effects(&execution, web_platform, scheduler, &mut summary).await;
             apply_media_effects(&execution, media_host, scheduler, &mut summary).await;
+            apply_service_worker_effects(&program.source, service_worker, scheduler, &mut summary)
+                .await;
             event_loop.after_script(&execution, render_document);
             summary.inline_executed = summary.inline_executed.saturating_add(1);
             record_execution(&execution, &mut summary);
@@ -306,6 +316,7 @@ async fn execute_external_script(
     event_loop: &mut BrowserEventLoop,
     web_platform: &mut WebPlatformHost,
     media_host: &mut MediaCanvasWorkerHost,
+    service_worker: &mut ServiceWorkerHost,
 ) -> Result<()> {
     let url = resolve_script_url(base_url, src)?;
     let mut request = ResourceRequest::script(url.clone()).max_bytes(MAX_EXTERNAL_SCRIPT_BYTES);
@@ -322,10 +333,36 @@ async fn execute_external_script(
     let execution = runtime.execute(&program);
     apply_web_platform_effects(&execution, web_platform, scheduler, summary).await;
     apply_media_effects(&execution, media_host, scheduler, summary).await;
+    apply_service_worker_effects(&program.source, service_worker, scheduler, summary).await;
     event_loop.after_script(&execution, render_document);
     summary.external_executed = summary.external_executed.saturating_add(1);
     record_execution(&execution, summary);
     Ok(())
+}
+
+async fn apply_service_worker_effects(
+    source: &str,
+    service_worker: &mut ServiceWorkerHost,
+    scheduler: &ResourceScheduler,
+    summary: &mut ScriptExecutionSummary,
+) {
+    let capture = capture_service_worker_effects(source);
+    if capture.effects.is_empty() {
+        summary.service_worker.warnings = summary
+            .service_worker
+            .warnings
+            .saturating_add(capture.warnings.len());
+        return;
+    }
+
+    let report = service_worker
+        .apply_effects(&capture.effects, scheduler)
+        .await;
+    summary.service_worker.merge_from(report);
+    summary.service_worker.warnings = summary
+        .service_worker
+        .warnings
+        .saturating_add(capture.warnings.len());
 }
 
 async fn apply_media_effects(

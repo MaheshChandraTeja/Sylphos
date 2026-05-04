@@ -502,6 +502,21 @@ fn translate_page_commands(commands: Vec<PaintCommand>, y_offset: f32) -> Vec<Pa
                 alt,
                 background,
             },
+            PaintCommand::SvgIcon {
+                x,
+                y,
+                width,
+                height,
+                title,
+                plan,
+            } => PaintCommand::SvgIcon {
+                x,
+                y: y + y_offset,
+                width,
+                height,
+                title,
+                plan,
+            },
         })
         .collect()
 }

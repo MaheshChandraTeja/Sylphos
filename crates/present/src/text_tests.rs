@@ -1,3 +1,5 @@
+#![allow(clippy::default_trait_access)]
+
 use crate::text::{
     layout_text, measure_text, parse_font_weight, positioned_glyphs, shape_text, FontDatabase,
     FontDescriptor, FontMetrics, FontRequest, FontStyle, FontWeight, ScriptClass, TextAlign,
@@ -179,7 +181,7 @@ fn custom_font_registration_is_used() {
             family: "Test Sans".to_owned(),
             weight: FontWeight::NORMAL,
             style: FontStyle::Normal,
-            stretch: crate::text::FontStretch::default(),
+            stretch: Default::default(),
             monospace: false,
             emoji: false,
         },

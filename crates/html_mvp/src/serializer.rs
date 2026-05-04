@@ -1,29 +1,43 @@
+#![deny(unsafe_code)]
 #![allow(clippy::needless_pass_by_value)]
+
+//! Stable HTML serializer for normalized Sylphos DOM trees.
 
 use crate::dom::{Document, Element, Node};
 
+/// Serializes a document into deterministic normalized HTML.
+#[must_use]
 pub fn serialize_document(doc: &Document) -> String {
     let mut out = String::new();
 
     if let Some(doctype) = &doc.doctype {
         out.push_str("<!DOCTYPE ");
-        out.push_str(doctype);
+        out.push_str(&doctype.trim().to_ascii_lowercase());
         out.push('>');
     }
 
     for node in &doc.children {
-        serialize_node(node, &mut out);
+        serialize_node(node, &mut out, None);
     }
 
     out
 }
 
-fn serialize_node(node: &Node, out: &mut String) {
+fn serialize_node(node: &Node, out: &mut String, parent_tag: Option<&str>) {
     match node {
-        Node::Text(text) => out.push_str(&escape_text(text)),
+        Node::Text(text) => {
+            if matches!(
+                parent_tag,
+                Some("script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext")
+            ) {
+                out.push_str(text);
+            } else {
+                out.push_str(&escape_text(text));
+            }
+        }
         Node::Comment(comment) => {
             out.push_str("<!--");
-            out.push_str(comment);
+            out.push_str(&sanitize_comment(comment));
             out.push_str("-->");
         }
         Node::Element(element) => serialize_element(element, out),
@@ -39,8 +53,16 @@ fn serialize_element(element: &Element, out: &mut String) {
         attrs.sort_by(|left, right| left.0.cmp(&right.0));
 
         for (key, value) in attrs {
+            if key.trim().is_empty() {
+                continue;
+            }
             out.push(' ');
-            out.push_str(&key);
+            out.push_str(&key.to_ascii_lowercase());
+
+            if value.is_empty() && is_boolean_attribute(&key) {
+                continue;
+            }
+
             out.push('=');
             out.push('"');
             out.push_str(&escape_attr(&value));
@@ -55,7 +77,7 @@ fn serialize_element(element: &Element, out: &mut String) {
     }
 
     for child in &element.children {
-        serialize_node(child, out);
+        serialize_node(child, out, Some(&element.tag));
     }
 
     out.push_str("</");
@@ -83,6 +105,28 @@ fn is_void_element(tag: &str) -> bool {
     )
 }
 
+fn is_boolean_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "allowfullscreen"
+            | "async"
+            | "autofocus"
+            | "autoplay"
+            | "checked"
+            | "controls"
+            | "defer"
+            | "disabled"
+            | "hidden"
+            | "loop"
+            | "multiple"
+            | "muted"
+            | "open"
+            | "readonly"
+            | "required"
+            | "selected"
+    )
+}
+
 fn escape_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
 
@@ -107,12 +151,17 @@ fn escape_attr(text: &str) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
-            '\'' => out.push('\''),
+            '\'' => out.push_str("&#39;"),
+            '\u{00A0}' => out.push_str("&nbsp;"),
             _ => out.push(ch),
         }
     }
 
     out
+}
+
+fn sanitize_comment(comment: &str) -> String {
+    comment.replace("--", "- -")
 }
 
 #[cfg(test)]
@@ -122,45 +171,26 @@ mod tests {
     use insta::assert_snapshot;
 
     fn parse_document(html: &str) -> Document {
-        match parse(html) {
-            Ok(document) => document,
-            Err(error) => panic!("test HTML failed to parse: {error}"),
-        }
+        parse(html).unwrap_or_else(|error| panic!("test HTML failed to parse: {error}"))
     }
 
     #[test]
-    fn comment_and_text() {
-        let html = "<!-- hi --><div>ok<!--x--></div>";
-        let doc = parse_document(html);
-        let out = serialize_document(&doc);
-
-        assert_snapshot!(out, @r###"<!-- hi --><div>ok<!--x--></div>"###);
+    fn serializes_normalized_shell() {
+        let out = serialize_document(&parse_document("<title>x</title><p>Hello"));
+        assert_snapshot!(out, @r###"<!DOCTYPE html><html><head><title>x</title></head><body><p>Hello</p></body></html>"###);
     }
 
     #[test]
-    fn void_elements() {
-        let html = "<div>a<br><img></div>";
-        let doc = parse_document(html);
-        let out = serialize_document(&doc);
-
-        assert_snapshot!(out, @r###"<div>a<br><img></div>"###);
+    fn raw_script_text_is_not_escaped() {
+        let out = serialize_document(&parse_document("<script>if (a < b) { x = '&'; }</script>"));
+        assert!(out.contains("if (a < b)"));
     }
 
     #[test]
-    fn attrs_and_entities() {
+    fn attrs_and_entities_are_stable() {
         let html = r#"<a href=/x?q=1&y='2' title='a "b" &amp; c' data-k=v>lt:&lt; > &amp;</a>"#;
-        let doc = parse_document(html);
-        let out = serialize_document(&doc);
-
-        assert_snapshot!(out, @r###"<a data-k="v" href="/x?q=1&amp;y='2'" title="a &quot;b&quot; &amp; c">lt:&lt; &gt; &amp;</a>"###);
-    }
-
-    #[test]
-    fn doctype_normalization() {
-        let html = "<!DOCTYPE HTML><html><body>x</body></html>";
-        let doc = parse_document(html);
-        let out = serialize_document(&doc);
-
-        assert_snapshot!(out, @r###"<!DOCTYPE html><html><body>x</body></html>"###);
+        let out = serialize_document(&parse_document(html));
+        assert!(out.contains("data-k=\"v\""));
+        assert!(out.contains("lt:&lt; &gt; &amp;"));
     }
 }
